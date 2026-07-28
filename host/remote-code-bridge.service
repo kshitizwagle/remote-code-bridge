@@ -1,0 +1,13 @@
+[Unit]
+Description=remote-code-bridge host daemon
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/remote-code-bridge/host.env
+ExecStart=%h/.local/bin/remote-code-bridge
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

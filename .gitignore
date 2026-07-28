@@ -1,0 +1,22 @@
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local secrets/configs
+*.env
+.env
+host.env
+remote.env
+
+# Build outputs
+dist/
+build/
+*.zip

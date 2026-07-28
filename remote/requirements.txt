@@ -1,0 +1,7 @@
+# Runtime dependencies: none.
+# The remote wrapper uses Bash and Python standard library only.
+
+# Required external executables:
+# - bash
+# - python3
+# - realpath or readlink-compatible path resolution

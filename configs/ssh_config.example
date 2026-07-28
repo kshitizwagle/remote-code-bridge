@@ -1,0 +1,18 @@
+# Add this to your HOST machine's ~/.ssh/config.
+# The Host alias must be the same alias used by VS Code Remote-SSH.
+
+Host devbox
+    HostName 192.168.0.1
+    User kshitiz
+    RemoteForward 127.0.0.1:39731 127.0.0.1:39731
+    ExitOnForwardFailure yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+# Cloudflare-style example, if this is how you reach SSH:
+#
+# Host devbox-cloudflare
+#     HostName ssh.example.com
+#     User kshitiz
+#     RemoteForward 127.0.0.1:39731 127.0.0.1:39731
+#     ExitOnForwardFailure yes
