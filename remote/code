@@ -119,5 +119,8 @@ except Exception as exc:
 if not payload.get("ok"):
     raise SystemExit(f"remote-code-bridge: {payload.get('error', 'request failed')}")
 
-print("Opening VS Code on host")
+if payload.get("dry_run"):
+    print("dry-run command:", " ".join(payload.get("command", [])))
+else:
+    print("Opening VS Code on host")
 PY
