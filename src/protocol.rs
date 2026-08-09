@@ -139,8 +139,7 @@ fn is_concrete_host_alias(host: &str) -> bool {
 
 fn spawn_and_reap(command: &[String]) -> Result<Receiver<Result<(), String>>, String> {
     let permit = try_acquire_child_slot().ok_or_else(|| CHILD_LIMIT_ERROR.to_string())?;
-    let mut child = Command::new(&command[0])
-        .args(&command[1..])
+    let mut child = spawn_command(command)
         .env_remove("REMOTE_CODE_BRIDGE_TOKEN")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
@@ -156,6 +155,23 @@ fn spawn_and_reap(command: &[String]) -> Result<Receiver<Result<(), String>>, St
         let _ = sender.send(result);
     });
     Ok(receiver)
+}
+
+fn spawn_command(command: &[String]) -> Command {
+    #[cfg(windows)]
+    if command[0].to_ascii_lowercase().ends_with(".cmd")
+        || command[0].to_ascii_lowercase().ends_with(".bat")
+    {
+        let mut launcher = Command::new("cmd.exe");
+        launcher
+            .args(["/D", "/S", "/C"])
+            .arg(&command[0])
+            .args(&command[1..]);
+        return launcher;
+    }
+    let mut launcher = Command::new(&command[0]);
+    launcher.args(&command[1..]);
+    launcher
 }
 
 struct ChildPermit;

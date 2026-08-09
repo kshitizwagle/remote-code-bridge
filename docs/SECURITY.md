@@ -5,7 +5,7 @@ This project lets a remote SSH session request that your host opens VS Code on a
 ## Boundaries
 
 - The host service accepts connections only on `127.0.0.1`.
-- The remote reaches it only through the SSH `RemoteForward` installed for the selected alias.
+- The remote reaches it only through the SSH `RemoteForward` installed for aliases resolving to the selected target.
 - `POST /open` requires an exact bearer token comparison.
 - Requests are capped at 64 KiB and must contain an absolute remote path.
 - The host may restrict aliases with `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
@@ -19,7 +19,7 @@ Do not change `REMOTE_CODE_BRIDGE_BIND` away from `127.0.0.1`. The bridge reject
 
 Treat the token like a password. Do not commit either configuration file, paste the token into issue reports, or place it in a GitHub download URL. If an anonymous release download is rate-limited, export `GH_TOKEN` in the current shell and retry the installer; it is used only for the authenticated retry.
 
-The convenience command uses the mutable `latest` release. For a reproducible supply-chain check, download a versioned `install.sh` and its matching `install.sh.sha256`, verify the checksum, then run the script.
+The convenience commands use the mutable `latest` release. The PowerShell `irm ... | iex` form executes the downloaded script in the current session; for a reproducible supply-chain check, download a versioned `install.sh` or `install.ps1` and its matching checksum, verify it, then run the installer.
 
 ## SSH requirements
 
@@ -40,7 +40,7 @@ ExitOnForwardFailure yes
 
 ## SSH discovery trust boundary
 
-Automatic alias discovery reads `~/.ssh/config` and recursively included files only when each file is owned by the current user, is not group/world-writable, and has no executable SSH directives (`Match exec`, `ProxyCommand`, `KnownHostsCommand`, `LocalCommand`, `PKCS11Provider`, or `SecurityKeyProvider`). This avoids executing configuration-controlled commands merely to discover an alias. Passing an explicit alias skips this inspection, so use that opt-in only for SSH configuration you trust.
+Alias discovery reads `~/.ssh/config` and recursively included files only when each file is owned by the current user, is not group/world-writable, and has no executable SSH directives (`Match exec`, `ProxyCommand`, `KnownHostsCommand`, `LocalCommand`, `PKCS11Provider`, or `SecurityKeyProvider`). This avoids executing configuration-controlled commands merely to discover equivalent aliases. Explicit aliases use the same fail-closed inspection.
 
 ## Threat model
 

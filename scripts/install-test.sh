@@ -66,6 +66,13 @@ for arg in "$@"; do alias=$arg; done
 case "$alias" in *'remote.env.'*) [ "${RCB_FAKE_FAIL_REMOTE_CONFIG:-}" = 1 ] && exit 99;; esac
 case "$*" in
   *'.remote-code-bridge.tmp'*|*'.remote.env.tmp'*) exit 98 ;;
+  *' -G '*|'-G '* )
+    case "$alias" in
+      canonical|192.168.1.100|other-name)
+        printf '%s\n' 'hostname 192.168.1.100' 'user test-user' 'port 22' ;;
+      *) printf '%s\n' "hostname $alias" 'user test-user' 'port 22' ;;
+    esac
+    exit 0 ;;
   *'uname -s'*'uname -m'*)
     case "$*" in *unreachable*) exit 255;; esac
     printf '%s\n%s\n' Linux "${RCB_FAKE_REMOTE_ARCH:-x86_64}" ;;
@@ -143,6 +150,20 @@ assert_not_contains "$TMP/ssh.log" 'BatchMode=yes -o ConnectTimeout=5 chosen'
 [ "$(awk -F= '$1=="REMOTE_CODE_BRIDGE_TOKEN" {print $2}' "$HOME_DIR/.config/remote-code-bridge/host.env")" = "$(awk -F= '$1=="REMOTE_CODE_BRIDGE_TOKEN" {print $2}' "$REMOTE_HOME/.config/remote-code-bridge/remote.env")" ] || fail 'host and remote token differ'
 [ "$(stat -c '%a' "$REMOTE_HOME/.config/remote-code-bridge/remote.env")" = 600 ] || fail 'remote config is not 0600'
 [ "$(sed -n '1p' "$HOME_DIR/.ssh/config")" = '# >>> remote-code-bridge include >>>' ] || fail 'managed SSH Include is not first'
+
+rm -rf "$HOME_DIR"
+mkdir -p "$HOME_DIR/.ssh"
+cat >"$HOME_DIR/.ssh/config" <<'EOF'
+Host canonical 192.168.1.100 other-name
+    HostName 192.168.1.100
+    User test-user
+    Port 22
+EOF
+run_install canonical >"$TMP/equivalent-aliases.out"
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'Host canonical 192.168.1.100 other-name'
+assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=canonical'
+assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_ALLOWED_HOSTS=canonical,192.168.1.100,other-name'
+assert_contains "$REMOTE_HOME/.config/remote-code-bridge/remote.env" 'REMOTE_CODE_BRIDGE_HOST_ALIAS=canonical'
 
 rm -rf "$HOME_DIR"
 mkdir -p "$HOME_DIR/.ssh"

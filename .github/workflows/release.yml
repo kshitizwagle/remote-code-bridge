@@ -23,6 +23,8 @@ jobs:
         run: cargo fmt --check
       - name: Lint
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build test binary
+        run: cargo build --locked
       - name: Test
         run: cargo test --locked
       - name: Check Rust coverage
@@ -34,6 +36,8 @@ jobs:
         run: sh -n install.sh
       - name: Test installer
         run: ./scripts/install-test.sh
+      - name: Check Windows installer contract
+        run: ./scripts/windows-install-test.sh
       - name: Smoke test
         run: ./scripts/smoke-test.sh
 
@@ -51,6 +55,8 @@ jobs:
             target: x86_64-apple-darwin
           - runner: macos-15
             target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -62,7 +68,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes musl-tools
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
-      - name: Build release binary
+      - name: Build release binary (Unix)
+        if: runner.os != 'Windows'
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
@@ -75,6 +82,24 @@ jobs:
           else
             shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
           fi
+      - name: Check PowerShell installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+      - name: Build release binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --locked --release --target ${{ matrix.target }}
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $name = 'remote-code-bridge-${{ matrix.target }}.exe'
+          Copy-Item "target/${{ matrix.target }}/release/remote-code-bridge.exe" "dist/$name"
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Encoding ascii "dist/$name.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -100,8 +125,9 @@ jobs:
       - name: Pin installer to this release
         run: |
           sed "s#releases/latest/download#releases/download/${RELEASE_TAG}#" install.sh > dist/install.sh
+          sed "s#releases/latest/download#releases/download/${RELEASE_TAG}#" install.ps1 > dist/install.ps1
           chmod 755 dist/install.sh
-          (cd dist && sha256sum install.sh > install.sh.sha256)
+          (cd dist && sha256sum install.sh > install.sh.sha256 && sha256sum install.ps1 > install.ps1.sha256)
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
