@@ -15,8 +15,9 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
           persist-credentials: false
       - name: Check formatting
         run: cargo fmt --check
@@ -52,8 +53,9 @@ jobs:
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
           persist-credentials: false
       - name: Install Linux musl linker
         if: runner.os == 'Linux'
@@ -73,7 +75,7 @@ jobs:
           else
             shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
           fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: dist/
@@ -87,10 +89,11 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
