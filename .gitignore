@@ -20,3 +20,6 @@ remote.env
 dist/
 build/
 *.zip
+
+# Local feature worktrees
+.worktrees/
