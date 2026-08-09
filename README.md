@@ -61,7 +61,7 @@ cd ~/project
 code .
 ```
 
-Only one SSH connection to a target can own the fixed reverse-forward port at a time. A cleanly closed session releases it immediately; a dead network session is detected after about 45 seconds. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session (or run `ssh -O exit <alias>` when control multiplexing is enabled) and reconnect.
+Only one SSH connection to a target can own the fixed reverse-forward port at a time. A cleanly closed session releases it immediately; a dead network session is detected after about 45 seconds. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session and reconnect. `ssh -O exit <alias>` works only when your own SSH config defines a `ControlPath`; otherwise close the old terminal or find the exact client with `pgrep -af 'ssh.*<alias>'` and terminate that PID.
 
 ### GitHub rate limits
 
