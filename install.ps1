@@ -288,6 +288,7 @@ try {
     New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
     Protect-Environment
     $GitHubToken = $SavedEnvironment['GH_TOKEN']
+    if ($env:PROCESSOR_ARCHITECTURE -notin @('AMD64', 'ARM64')) { Fail 'Windows x64 is required' }
     $hostArch = 'x86_64'
     $target = Find-Target
     $targetIdentity = Get-SshIdentity $target
