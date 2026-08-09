@@ -1,0 +1,14 @@
+services:
+  remote:
+    build: .
+    command: /usr/local/bin/remote-entrypoint.sh
+    volumes:
+      - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"
+
+  host:
+    build: .
+    depends_on:
+      - remote
+    volumes:
+      - "../../../:/repo:ro"
+      - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"
