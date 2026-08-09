@@ -151,7 +151,7 @@ function Write-EnvFile([string]$Path, [hashtable]$Values) {
 }
 
 function Get-SshWords([string]$Text) {
-    if (($Text.ToCharArray() | Where-Object { $_ -eq '"' }).Count % 2) { Fail 'unsupported SSH quoting' }
+    if ((@($Text.ToCharArray() | Where-Object { $_ -eq '"' })).Count % 2) { Fail 'unsupported SSH quoting' }
     $words = [Collections.Generic.List[string]]::new()
     foreach ($match in [regex]::Matches($Text, '(?:"([^"]*)"|(\S+))')) {
         if ($match.Groups[1].Success) { $words.Add($match.Groups[1].Value) } else { $words.Add($match.Groups[2].Value) }
