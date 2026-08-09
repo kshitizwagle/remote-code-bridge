@@ -7,17 +7,61 @@ on:
       - '[0-9]*'
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release number, for example 1.1.0 (the v prefix is optional)'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      ref: ${{ steps.version.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.event.release.tag_name || github.ref_name }}
+          persist-credentials: false
+      - id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            raw=$INPUT_VERSION
+            ref=main
+            case "$raw" in
+              v*) tag=$raw ;;
+              *) tag="v$raw" ;;
+            esac
+          else
+            tag=$RELEASE_TAG
+            [ -n "$tag" ] || tag=$REF_NAME
+            ref=$tag
+          fi
+          version="${tag#v}"
+          case "$version" in
+            ''|.*|*.|*..*|*[!0-9.]*) echo 'version must contain only numbers and dots' >&2; exit 1 ;;
+          esac
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: prepare
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
       - name: Check formatting
         run: cargo fmt --check
@@ -42,7 +86,7 @@ jobs:
         run: ./scripts/smoke-test.sh
 
   build-release:
-    needs: test
+    needs: [prepare, test]
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
       - name: Install Linux musl linker
         if: runner.os == 'Linux'
@@ -107,16 +151,17 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build-release
+    needs: [prepare, build-release]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_REF: ${{ needs.prepare.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@v5
         with:
@@ -135,5 +180,5 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
-            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" dist/*
+            gh release create "$RELEASE_TAG" --target "$RELEASE_REF" --title "$RELEASE_TAG" --generate-notes dist/*
           fi

@@ -21,6 +21,8 @@ Treat the token like a password. Do not commit either configuration file, paste 
 
 The convenience commands use the mutable `latest` release. The PowerShell `irm ... | iex` form executes the downloaded script in the current session; for a reproducible supply-chain check, download a versioned `install.sh` or `install.ps1` and its matching checksum, verify it, then run the installer.
 
+`remote-code-bridge update` downloads the latest installer and runs it with the saved SSH alias. It uses `curl` on POSIX hosts or built-in PowerShell on Windows; if GitHub rate-limits the download, export `GH_TOKEN` and retry.
+
 ## SSH requirements
 
 The remote SSH server must permit TCP forwarding. In `sshd_config` this normally requires:

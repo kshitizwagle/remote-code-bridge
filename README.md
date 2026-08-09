@@ -35,7 +35,13 @@ For a reproducible install, use a versioned release URL and verify its matching 
 
 ### Updating
 
-Rerun the same installer to update; it is idempotent. It downloads and verifies the current host and remote binaries, preserves a valid token and custom settings, refreshes the remote wrapper, and restarts the host service. Pass the same alias again when using an explicit install. There is no separate updater to drift from the release installer.
+Update an existing installation from the host with:
+
+```sh
+remote-code-bridge update
+```
+
+It reads the saved SSH alias, downloads and verifies the current host and remote binaries, preserves a valid token and custom settings, refreshes the remote wrapper, and restarts the host service. Use `remote-code-bridge update <ssh-alias>` if the saved host config is missing or stale. Rerunning the same installer remains an equivalent recovery path.
 
 The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target, then applies the same tunnel to every configured alias resolving to that target (matching effective hostname, user, and port). One canonical alias is used for the VS Code target. Discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
 
@@ -125,7 +131,7 @@ cargo test --locked
 ./scripts/smoke-test.sh
 ```
 
-Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, or pushing a `v*`/numeric version tag, publishes the five verified platform binaries, their SHA-256 files, and version-pinned `install.sh`/`install.ps1` installers; workflow actions use readable major-version references.
+Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, pushing a `v*`/numeric version tag, or choosing **Actions -> release -> Run workflow** publishes the five verified platform binaries, their SHA-256 files, and version-pinned `install.sh`/`install.ps1` installers. The manual workflow asks for a release number and builds from `main`; the `v` prefix is optional. Workflow actions use readable major-version references.
 
 The Linux and macOS assets are native executables and intentionally have no filename extension; the Windows asset is the `.exe` build.
 

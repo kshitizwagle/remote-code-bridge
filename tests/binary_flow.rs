@@ -226,4 +226,53 @@ fn binary_reports_configuration_and_cli_errors_without_starting_a_server() {
     let unknown_command = Command::new(binary()).arg("unknown").output().unwrap();
     assert_eq!(unknown_command.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&unknown_command.stderr).contains("usage:"));
+
+    let update_without_install = Command::new(binary())
+        .arg("update")
+        .env("HOME", empty_home.path())
+        .output()
+        .unwrap();
+    assert_eq!(update_without_install.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&update_without_install.stderr)
+        .contains("could not determine SSH alias"));
+}
+
+#[cfg(unix)]
+#[test]
+fn update_reruns_the_release_installer_for_the_saved_alias() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TestDirectory::new("update-home");
+    home.config(
+        "host.env",
+        "REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox\nREMOTE_CODE_BRIDGE_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+    );
+    let tools = TestDirectory::new("update-tools");
+    fs::write(
+        tools.path().join("curl"),
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '#!/bin/sh' 'printf \"alias=%s\\\\n\" \"$1\" > \"$HOME/update-args\"'\n",
+    )
+    .unwrap();
+    fs::set_permissions(tools.path().join("curl"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let update = Command::new(binary())
+        .arg("update")
+        .env("HOME", home.path())
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(
+        update.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("update-args")).unwrap(),
+        "alias=devbox\n"
+    );
 }

@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod protocol;
 mod server;
+mod update;
 
 pub use client::{parse_open_args, resolve_remote_path, send_open_request};
 pub use config::{
@@ -10,6 +11,7 @@ pub use config::{
 };
 pub use protocol::{build_code_command, handle_request, HttpRequest, OpenRequest, Response};
 pub use server::serve;
+pub use update::run_update;
 
 pub const APP_NAME: &str = "remote-code-bridge";
 pub const DEFAULT_PORT: u16 = 39731;
