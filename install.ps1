@@ -279,7 +279,7 @@ function Install-HostService([string]$HostBin) {
     Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
     $action = New-ScheduledTaskAction -Execute $HostBin -Argument 'serve'
     $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $principal = New-ScheduledTaskPrincipal -UserId $CurrentPrincipal -LogonType InteractiveToken -RunLevel Limited
+    $principal = New-ScheduledTaskPrincipal -UserId $CurrentPrincipal -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName 'remote-code-bridge' -Action $action -Trigger $trigger -Principal $principal -Description 'remote-code-bridge host daemon' -Force | Out-Null
     Start-ScheduledTask -TaskName 'remote-code-bridge'
 }

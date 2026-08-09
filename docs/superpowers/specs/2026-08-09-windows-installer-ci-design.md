@@ -12,6 +12,8 @@ Extend `scripts/windows-parser-test.ps1` to execute the real `Install-HostServic
 
 Add a `windows-installer` job to `.github/workflows/smoke.yml` on `windows-2022`. Check out the repository with persisted credentials disabled, then run `scripts/windows-parser-test.ps1` once with Windows PowerShell (`shell: powershell`) and once with PowerShell Core (`shell: pwsh`). Either failure blocks pushes and pull requests.
 
+Run the same two checks in the existing Windows build leg of `.github/workflows/release.yml`. The release build and publish chain already depends on that leg, so a Windows installer failure blocks publication without adding another job.
+
 ## Test Sequence
 
 1. Add the service-function regression assertion and verify it fails on `InteractiveToken`.

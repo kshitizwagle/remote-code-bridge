@@ -37,3 +37,16 @@ jobs:
         run: ./scripts/windows-install-test.sh
       - name: Smoke test
         run: ./scripts/smoke-test.sh
+
+  windows-installer:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Test Windows installer with Windows PowerShell
+        shell: powershell
+        run: ./scripts/windows-parser-test.ps1
+      - name: Test Windows installer with PowerShell Core
+        shell: pwsh
+        run: ./scripts/windows-parser-test.ps1

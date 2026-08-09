@@ -126,14 +126,14 @@ jobs:
           else
             shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
           fi
-      - name: Check PowerShell installer syntax
+      - name: Test Windows installer with Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/windows-parser-test.ps1
+      - name: Test Windows installer with PowerShell Core
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+        run: ./scripts/windows-parser-test.ps1
       - name: Build release binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

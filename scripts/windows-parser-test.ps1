@@ -35,4 +35,33 @@ function Invoke-Native {
 $identity = Get-SshIdentity 'devbox'
 if ($identity -ne "example.test`talice`t22") { throw 'Get-SshIdentity failed to read the effective SSH identity' }
 
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $serviceFunction = $ast.Find({
+        $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Install-HostService'
+    }, $true)
+    if ($null -eq $serviceFunction) { throw 'Install-HostService not found' }
+    Invoke-Expression $serviceFunction.Extent.Text
+    $CurrentPrincipal = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $script:RegisteredPrincipal = $null
+    Import-Module ScheduledTasks -ErrorAction Stop
+
+    function Stop-ScheduledTask {
+        [CmdletBinding()]
+        param([string]$TaskName)
+    }
+    function Register-ScheduledTask {
+        [CmdletBinding()]
+        param([string]$TaskName, $Action, $Trigger, $Principal, [string]$Description, [switch]$Force)
+        $script:RegisteredPrincipal = $Principal
+    }
+    function Start-ScheduledTask {
+        [CmdletBinding()]
+        param([string]$TaskName)
+    }
+
+    Install-HostService 'C:\remote-code-bridge.exe'
+    if ($script:RegisteredPrincipal.LogonType -ne 'Interactive') { throw 'scheduled task principal is not interactive' }
+    if ($script:RegisteredPrincipal.RunLevel -ne 'Limited') { throw 'scheduled task principal is not limited' }
+}
+
 Write-Output 'windows parser tests passed'
