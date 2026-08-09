@@ -159,7 +159,7 @@ public static class FakeSsh
                     File.AppendAllText(log, "remote-file-input=" + buffer.Length + Environment.NewLine);
                 if (index >= 0)
                     File.AppendAllText(log, "remote-config-token-present" + Environment.NewLine);
-                if (text.StartsWith("native-test-remote-payload-v1", StringComparison.Ordinal))
+                if (text.IndexOf("native-test-remote-payload-v1", StringComparison.Ordinal) >= 0)
                     File.AppendAllText(log, "remote-payload-marker" + Environment.NewLine);
                 if (!joined.Contains("cat >") && index < 0)
                     File.AppendAllText(log, "stdin-bytes=" + buffer.Length + Environment.NewLine);
