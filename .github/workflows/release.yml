@@ -82,6 +82,8 @@ jobs:
         run: ./scripts/install-test.sh
       - name: Check Windows installer contract
         run: ./scripts/windows-install-test.sh
+      - name: Native Linux installer/update E2E
+        run: ./scripts/native-linux-install-update-test.sh
       - name: Smoke test
         run: ./scripts/smoke-test.sh
 
@@ -134,6 +136,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/windows-parser-test.ps1
+      - name: Build test binary for native installer/update E2E
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --locked
+      - name: Native Windows installer/update E2E with Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/native-windows-install-update-test.ps1
+      - name: Native Windows installer/update E2E with PowerShell Core
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/native-windows-install-update-test.ps1
       - name: Build release binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

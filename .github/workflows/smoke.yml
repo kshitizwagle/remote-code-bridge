@@ -35,6 +35,8 @@ jobs:
         run: ./scripts/install-test.sh
       - name: Check Windows installer contract
         run: ./scripts/windows-install-test.sh
+      - name: Native Linux installer/update E2E
+        run: ./scripts/native-linux-install-update-test.sh
       - name: Smoke test
         run: ./scripts/smoke-test.sh
 
@@ -44,6 +46,15 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Build test binary
+        shell: pwsh
+        run: cargo build --locked
+      - name: Native Windows installer/update E2E with Windows PowerShell
+        shell: powershell
+        run: ./scripts/native-windows-install-update-test.ps1
+      - name: Native Windows installer/update E2E with PowerShell Core
+        shell: pwsh
+        run: ./scripts/native-windows-install-update-test.ps1
       - name: Test Windows installer with Windows PowerShell
         shell: powershell
         run: ./scripts/windows-parser-test.ps1
