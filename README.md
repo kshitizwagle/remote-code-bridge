@@ -97,7 +97,7 @@ cargo test --locked
 ./scripts/smoke-test.sh
 ```
 
-Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. A `v*` tag publishes the four verified platform binaries, their SHA-256 files, and a version-pinned `install.sh`; all workflow actions are pinned to immutable commits.
+Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, or pushing a `v*`/numeric version tag, publishes the four verified platform binaries, their SHA-256 files, and a version-pinned `install.sh`; all workflow actions are pinned to immutable commits.
 
 ## License
 
