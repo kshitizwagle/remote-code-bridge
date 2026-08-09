@@ -76,7 +76,10 @@ for _ in $(seq 1 50); do
     ssh devbox true >/dev/null 2>&1 && break
     sleep 0.1
 done
-ssh devbox true >/dev/null 2>&1 || fail 'Compose SSH target did not start'
+if ! ssh devbox true >/dev/null 2>&1; then
+    ssh -vvv devbox true 2>&1 || :
+    fail 'Compose SSH target did not start'
+fi
 
 sh "$ROOT/install.sh" devbox >/dev/null
 HOST_BIN="$HOME_DIR/.local/bin/remote-code-bridge"
