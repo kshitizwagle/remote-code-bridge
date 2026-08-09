@@ -1,6 +1,6 @@
 use remote_code_bridge::{
     default_config_path, generate_token, parse_open_args, process_host_config,
-    process_remote_config, read_remote_config, send_open_request, serve,
+    process_remote_config, read_remote_config, run_update, send_open_request, serve,
 };
 use std::env;
 use std::path::Path;
@@ -79,6 +79,12 @@ fn run() -> Result<(), String> {
             println!("{}", generate_token()?);
             Ok(())
         }
-        _ => Err("usage: remote-code-bridge <serve|open|generate-token>".into()),
+        "update" => {
+            if remaining.len() > 1 {
+                return Err("usage: remote-code-bridge update [ssh-alias]".into());
+            }
+            run_update(remaining.first().map(String::as_str))
+        }
+        _ => Err("usage: remote-code-bridge <serve|open|generate-token|update>".into()),
     }
 }
