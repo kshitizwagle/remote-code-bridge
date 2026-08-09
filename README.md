@@ -1,3 +1,7 @@
+[![release](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/release.yml)
+
+---
+
 # remote-code-bridge
 
 Run `code .` from a Linux machine reached through SSH and open that directory in VS Code on your macOS or Linux host.
