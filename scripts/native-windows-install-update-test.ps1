@@ -16,6 +16,7 @@ $SshLog = Join-Path $TempRoot 'ssh.log'
 $InstallScript = Join-Path $Root 'install.ps1'
 $Port = 18081 + (Get-Random -Minimum 0 -Maximum 200)
 $ServerJob = $null
+$CurrentPrincipal = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $OriginalUserHome = [Environment]::GetEnvironmentVariable('HOME', 'User')
 $SavedProcess = @{}
@@ -124,6 +125,11 @@ try {
     $sshConfig = Join-Path $Profile '.ssh/config'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sshConfig) | Out-Null
     Set-Content -LiteralPath $sshConfig -Encoding utf8 -Value @('Host devbox', '    HostName fake-remote', '    User rcbremote')
+    $sshAcl = Get-Acl -LiteralPath $sshConfig
+    $sshAcl.SetOwner([Security.Principal.NTAccount]$CurrentPrincipal)
+    $sshAcl.SetAccessRuleProtection($true, $false)
+    $sshAcl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new($CurrentPrincipal, 'FullControl', 'Allow'))
+    Set-Acl -LiteralPath $sshConfig -AclObject $sshAcl
 
     Set-Content -LiteralPath (Join-Path $FakeBin 'code.cmd') -Encoding ascii -Value '@exit /b 0'
     $sshSource = @'
