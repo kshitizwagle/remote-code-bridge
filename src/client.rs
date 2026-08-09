@@ -113,20 +113,23 @@ pub fn send_open_request(
     serde_json::from_slice(body).map_err(|_| "host bridge returned invalid JSON".into())
 }
 
-fn read_response_limited(stream: &mut TcpStream, deadline: Instant) -> Result<Vec<u8>, String> {
+fn read_response_limited<R: Read>(stream: &mut R, deadline: Instant) -> Result<Vec<u8>, String> {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
         if Instant::now() >= deadline {
             return Err("host bridge response timed out".into());
         }
-        let read = stream.read(&mut buffer).map_err(|error| {
-            if Instant::now() >= deadline {
-                "host bridge response timed out".into()
-            } else {
-                reach_error(error)
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                if Instant::now() >= deadline {
+                    return Err("host bridge response timed out".into());
+                }
+                return Err(reach_error(error));
             }
-        })?;
+        };
         if Instant::now() >= deadline {
             return Err("host bridge response timed out".into());
         }
@@ -161,7 +164,7 @@ fn reach_error(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::read_response_limited;
-    use std::io::Write;
+    use std::io::{self, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -185,5 +188,28 @@ mod tests {
         writer.join().unwrap().unwrap();
 
         assert_eq!(error, "host bridge response timed out");
+    }
+
+    struct InterruptedThenEof {
+        interrupted: bool,
+    }
+
+    impl Read for InterruptedThenEof {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn response_deadline_retries_interrupted_reads() {
+        let mut reader = InterruptedThenEof { interrupted: false };
+        let response =
+            read_response_limited(&mut reader, Instant::now() + Duration::from_millis(100))
+                .expect("interrupted reads should be retried");
+        assert!(response.is_empty());
     }
 }
