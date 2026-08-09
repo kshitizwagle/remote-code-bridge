@@ -9,6 +9,7 @@ services:
     build: .
     depends_on:
       - remote
+    user: "${RCB_UID:?RCB_UID is required}:${RCB_GID:?RCB_GID is required}"
     volumes:
       - "../../../:/repo:ro"
       - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"

@@ -16,5 +16,10 @@ trap cleanup EXIT HUP INT TERM
 
 RCB_FIXTURE_DIR=$FIXTURE; export RCB_FIXTURE_DIR
 RCB_PUBLIC_DIR=$PUBLIC; export RCB_PUBLIC_DIR
-$COMPOSE run --rm host /repo/tests/native/linux/run-install-update.sh
+RCB_UID=$(id -u); export RCB_UID
+RCB_GID=$(id -g); export RCB_GID
+if ! $COMPOSE run --rm host /repo/tests/native/linux/run-install-update.sh; then
+    $COMPOSE logs --no-color remote >&2 || :
+    exit 1
+fi
 printf '%s\n' 'native Linux install/update test passed'
