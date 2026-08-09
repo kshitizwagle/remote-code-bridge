@@ -4,13 +4,99 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  smoke:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          python-version: '3.11'
-      - name: Run smoke test
+          persist-credentials: false
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      - name: Check Rust coverage
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.8.7 --locked
+          cargo llvm-cov --all-targets --locked --fail-under-lines 80
+      - name: Check installer syntax
+        run: sh -n install.sh
+      - name: Test installer
+        run: ./scripts/install-test.sh
+      - name: Smoke test
         run: ./scripts/smoke-test.sh
+
+  build-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Linux musl linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Test
+        run: cargo test --locked
+      - name: Build release binary
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          cargo build --locked --release --target ${{ matrix.target }}
+          mkdir dist
+          cp target/${{ matrix.target }}/release/remote-code-bridge dist/remote-code-bridge-${{ matrix.target }}
+          if command -v sha256sum >/dev/null; then
+            sha256sum dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
+          else
+            shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Pin installer to this release
+        run: |
+          sed "s#releases/latest/download#releases/download/${GITHUB_REF_NAME}#" install.sh > dist/install.sh
+          chmod 755 dist/install.sh
+          (cd dist && sha256sum install.sh > install.sh.sha256)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" dist/*

@@ -1,206 +1,103 @@
 # remote-code-bridge
 
-Run `code .` on a remote SSH machine and open the matching folder in VS Code on your host.
-
-This recreates the WSL-style workflow for normal SSH sessions:
+Run `code .` from a Linux machine reached through SSH and open that directory in VS Code on your macOS or Linux host.
 
 ```text
-remote shell: code .
-        ↓
-SSH reverse tunnel to host localhost
-        ↓
-host bridge runs: code --remote ssh-remote+<host-alias> <remote-path>
+remote: code . → SSH reverse tunnel → host bridge → code --remote ssh-remote+alias /remote/path
 ```
 
-## Status
+The release contains one Rust binary. It runs as the host service and, when installed remotely as `code`, as the client. There is no Python, Rust toolchain, or other language runtime required after installation.
 
-MVP scaffold intended for open-source development. It is intentionally small: one host daemon, one remote `code` wrapper, and example configs.
+## Install
 
-## Requirements
+Run this on the machine that runs VS Code:
 
-### Host machine
-
-- macOS or Linux
-- Python 3.9+
-- OpenSSH client
-- VS Code installed
-- `code` command available in `PATH`
-- VS Code **Remote - SSH** extension installed
-
-### Remote machine
-
-- Linux shell environment
-- Bash
-- Python 3.8+
-- OpenSSH server with TCP forwarding enabled
-
-## Quick start
-
-Use the same host alias that works with VS Code Remote-SSH. In examples below, the SSH alias is `devbox`.
-
-### 1. Install host bridge
-
-On your host:
-
-```bash
-./host/install.sh
+```sh
+curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s --
 ```
 
-This installs:
+For a reproducible install, use a versioned release URL and verify its `install.sh.sha256` before running it.
 
-```text
-~/.local/bin/remote-code-bridge
-~/.config/remote-code-bridge/host.env
+The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target. Auto-discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
+
+```sh
+curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s -- devbox
 ```
 
-Start the host bridge:
+The selected alias must be the same alias that VS Code Remote - SSH uses. Passing an alias skips auto-discovery's config inspection and uses your existing SSH setup. The installer needs OpenSSH, `curl`, a SHA-256 utility, and a POSIX shell. The host needs VS Code, its `code` CLI in `PATH`, and the Remote - SSH extension.
 
-```bash
-set -a
-source ~/.config/remote-code-bridge/host.env
-set +a
-remote-code-bridge
-```
+### What installation configures
 
-Keep it running while testing.
+- Downloads host and remote binaries, verifies their SHA-256 files, and transfers the remote binary and its configuration over SSH.
+- Generates a token unless a valid existing host token is present. The remote config is sent through SSH standard input, never as a command argument, URL, or filename.
+- Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
+- Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
+- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731` and `ExitOnForwardFailure yes` for the selected alias.
+- Starts the host bridge as a systemd user service on Linux or a launchd agent on macOS. It starts at user login, when a desktop VS Code session is available.
 
-### 2. Add SSH reverse forwarding
+Reconnect to the remote after installation, then run:
 
-Add this to your host `~/.ssh/config`:
-
-```sshconfig
-Host devbox
-    HostName 192.168.0.1
-    User kshitiz
-    RemoteForward 127.0.0.1:39731 127.0.0.1:39731
-    ExitOnForwardFailure yes
-```
-
-Replace `HostName` and `User` with your real server details. If you use Cloudflare SSH routing, `HostName ssh.example.com` is fine as long as VS Code Remote-SSH can connect to the same alias.
-
-Connect:
-
-```bash
-ssh devbox
-```
-
-### 3. Install remote wrapper
-
-On the remote machine:
-
-```bash
-./remote/install.sh
-```
-
-Edit the remote config:
-
-```bash
-nano ~/.config/remote-code-bridge/remote.env
-```
-
-Set:
-
-```bash
-REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox
-REMOTE_CODE_BRIDGE_TOKEN=<same-token-from-host.env>
-```
-
-Make sure `~/.local/bin` comes before other `code` binaries:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Now test from the remote SSH shell:
-
-```bash
-cd ~/some-project
+```sh
+cd ~/project
 code .
 ```
 
-VS Code should open on your host through Remote-SSH.
+### GitHub rate limits
 
-## Repository layout
+If the installer reports a GitHub `403` or `429`, create a GitHub token with access to public releases, export it only in your current shell, and retry:
 
-```text
-remote-code-bridge/
-├── host/
-│   ├── remote_code_bridge.py
-│   ├── install.sh
-│   ├── requirements.txt
-│   ├── remote-code-bridge.service
-│   └── com.remote-code-bridge.plist
-├── remote/
-│   ├── code
-│   ├── install.sh
-│   └── requirements.txt
-├── configs/
-│   ├── host.env.example
-│   ├── remote.env.example
-│   └── ssh_config.example
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── SECURITY.md
-├── scripts/
-│   └── smoke-test.sh
-├── linear-ticket.md
-├── LICENSE
-└── README.md
+```sh
+export GH_TOKEN=github_pat_...
+curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s -- [ssh-alias]
 ```
+
+The installer retries the download with `GH_TOKEN` only after an anonymous failure. Do not put the token in the install URL or commit it to configuration.
 
 ## How it works
 
-1. Your SSH connection creates a reverse tunnel:
+1. The SSH connection supplies a reverse tunnel from remote `127.0.0.1:39731` to the host bridge on the same address.
+2. The remote `code` client resolves one local path and sends an authenticated `POST /open` request through that tunnel.
+3. The host validates the token, SSH alias, path, and supported VS Code flags, then invokes the local VS Code CLI without a shell.
 
-   ```text
-   remote 127.0.0.1:39731 → host 127.0.0.1:39731
-   ```
-
-2. The remote `code` wrapper sends a JSON request to `127.0.0.1:39731`.
-3. The host daemon validates the bearer token.
-4. The host daemon runs:
-
-   ```bash
-   code --remote ssh-remote+devbox /remote/path
-   ```
-
-## Security defaults
-
-- The host bridge binds only to `127.0.0.1`.
-- Requests require a bearer token.
-- The remote server reaches the bridge only through your SSH reverse tunnel.
-- Commands are executed without shell interpolation.
-- The host can restrict accepted SSH aliases using `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
+The host bridge offers an unauthenticated `GET /healthz` endpoint and an authenticated `POST /open` endpoint. See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md) for the protocol and limits.
 
 ## Development
 
-Run the host daemon locally:
+Build locally with Rust:
 
-```bash
-set -a
-source configs/host.env.example
-set +a
-python3 host/remote_code_bridge.py
+```sh
+cargo build --release
 ```
 
-In another terminal:
+Run the host service with generated or environment-based configuration:
 
-```bash
-REMOTE_CODE_BRIDGE_TOKEN=change-me \
+```sh
+export REMOTE_CODE_BRIDGE_TOKEN="$(target/release/remote-code-bridge generate-token)"
+REMOTE_CODE_BRIDGE_TOKEN="$REMOTE_CODE_BRIDGE_TOKEN" \
+REMOTE_CODE_BRIDGE_DRY_RUN=1 \
+target/release/remote-code-bridge serve
+```
+
+In another terminal, set the same generated token, then invoke the client:
+
+```sh
+REMOTE_CODE_BRIDGE_TOKEN="$REMOTE_CODE_BRIDGE_TOKEN" \
 REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox \
-remote/code .
+target/release/remote-code-bridge open .
 ```
 
-Without a tunnel, this only works when the wrapper can reach the host daemon directly at local port `39731`.
+Configuration files are read from `~/.config/remote-code-bridge/host.env` and `remote.env`; non-empty `REMOTE_CODE_BRIDGE_*` environment variables take precedence. `remote-code-bridge generate-token` prints a new token for development or recovery.
 
-## Roadmap
+Run the project checks with:
 
-- Native installer package
-- Launchd and systemd install helpers
-- Better support for `code -g file:line:column`
-- Multiple named host profiles
-- Optional Unix socket mode for same-machine development
-- Tests around argument parsing and request validation
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+./scripts/smoke-test.sh
+```
+
+Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. A `v*` tag publishes the four verified platform binaries, their SHA-256 files, and a version-pinned `install.sh`; all workflow actions are pinned to immutable commits.
 
 ## License
 
