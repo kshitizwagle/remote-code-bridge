@@ -1,14 +1,21 @@
 services:
   remote:
-    build: .
+    build:
+      context: .
+      args:
+        RCB_UID: "${RCB_UID:?RCB_UID is required}"
     command: /usr/local/bin/remote-entrypoint.sh
     volumes:
       - "${RCB_PUBLIC_DIR:?RCB_PUBLIC_DIR is required}:/public:ro"
 
   host:
-    build: .
+    build:
+      context: .
+      args:
+        RCB_UID: "${RCB_UID:?RCB_UID is required}"
     depends_on:
       - remote
+    user: rcb
     volumes:
       - "../../../:/repo:ro"
       - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"
