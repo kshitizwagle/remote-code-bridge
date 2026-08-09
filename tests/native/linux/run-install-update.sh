@@ -21,6 +21,8 @@ mkdir -p "$HOME_DIR/.ssh" "$RELEASE" "$BIN_DIR"
 
 ssh-keygen -q -t ed25519 -N '' -f "$FIXTURE/id_ed25519"
 chmod 600 "$FIXTURE/id_ed25519"
+cp "$FIXTURE/id_ed25519.pub" /public/id_ed25519.pub
+chmod 644 /public/id_ed25519.pub
 cat >"$SSH_CONFIG" <<EOF
 Host devbox
     HostName remote
@@ -86,9 +88,12 @@ assert_contains "$HOST_CONFIG" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox'
 assert_remote 'test -x "$HOME/.local/bin/remote-code-bridge"'
 assert_remote 'test -f "$HOME/.config/remote-code-bridge/remote.env"'
 TOKEN=$(awk -F= '$1 == "REMOTE_CODE_BRIDGE_TOKEN" { print $2; exit }' "$HOST_CONFIG")
+REMOTE_TOKEN=$(ssh devbox 'sed -n "s/^REMOTE_CODE_BRIDGE_TOKEN=//p" "$HOME/.config/remote-code-bridge/remote.env"')
 [ "${#TOKEN}" -eq 64 ] || fail 'installer did not generate a 64-character token'
+[ "$REMOTE_TOKEN" = "$TOKEN" ] || fail 'installer did not transfer the remote token'
 [ "$(wc -l <"$SERVICE_LOG" | tr -d ' ')" -eq 3 ] || fail 'installer did not invoke systemctl three times'
 
+ssh devbox 'rm -f "$HOME/.local/bin/remote-code-bridge" "$HOME/.config/remote-code-bridge/remote.env"'
 "$HOST_BIN" update devbox >/dev/null
 for _ in $(seq 1 100); do
     [ -f "$MARKER" ] && break
@@ -97,8 +102,11 @@ done
 [ -f "$MARKER" ] || fail 'updater did not execute the local release installer'
 [ "$(cat "$MARKER")" = updated ] || fail 'updater marker was incorrect'
 TOKEN_AFTER=$(awk -F= '$1 == "REMOTE_CODE_BRIDGE_TOKEN" { print $2; exit }' "$HOST_CONFIG")
+REMOTE_TOKEN_AFTER=$(ssh devbox 'sed -n "s/^REMOTE_CODE_BRIDGE_TOKEN=//p" "$HOME/.config/remote-code-bridge/remote.env"')
 [ "$TOKEN_AFTER" = "$TOKEN" ] || fail 'updater did not preserve the host token'
+[ "$REMOTE_TOKEN_AFTER" = "$TOKEN" ] || fail 'updater did not recreate the remote config'
 assert_remote 'test -x "$HOME/.local/bin/remote-code-bridge"'
+assert_remote 'test -f "$HOME/.config/remote-code-bridge/remote.env"'
 [ "$(wc -l <"$SERVICE_LOG" | tr -d ' ')" -eq 6 ] || fail 'updater did not rerun the service manager'
 
 printf '%s\n' 'native Linux install/update flow passed'

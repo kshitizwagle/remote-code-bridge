@@ -17,10 +17,16 @@ $InstallScript = Join-Path $Root 'install.ps1'
 $Port = 18081 + (Get-Random -Minimum 0 -Maximum 200)
 $ServerJob = $null
 $OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$OriginalUserHome = [Environment]::GetEnvironmentVariable('HOME', 'User')
 $SavedProcess = @{}
 foreach ($name in @('USERPROFILE', 'HOME', 'Path', 'RCB_RELEASE_URL', 'RCB_UPDATE_MARKER', 'RCB_FAKE_SSH_LOG')) {
     $SavedProcess[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
+$TestOwnsTask = $false
+$TestFailure = $null
+$CleanupErrors = [Collections.Generic.List[string]]::new()
+$UpdaterBaseline = [Collections.Generic.HashSet[int]]::new()
+$UpdaterProcessIds = [Collections.Generic.HashSet[int]]::new()
 
 function Fail([string]$Message) { throw "native Windows install/update: $Message" }
 
@@ -76,11 +82,43 @@ function Start-ReleaseServer([string]$Directory, [int]$ListenPort) {
     } -ArgumentList $Directory, $ListenPort
 }
 
+function Add-CleanupError([string]$Message) {
+    $CleanupErrors.Add($Message)
+}
+
+function Get-DetachedUpdaterIds {
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue)) {
+        if ($process.CommandLine -and $process.CommandLine.Contains('RCB_UPDATE_URL')) {
+            [int]$process.ProcessId
+        }
+    }
+}
+
+function Remember-DetachedUpdaters {
+    foreach ($processId in @(Get-DetachedUpdaterIds)) {
+        if (-not $UpdaterBaseline.Contains($processId)) { [void]$UpdaterProcessIds.Add($processId) }
+    }
+}
+
+function Stop-DetachedUpdater {
+    foreach ($processId in $UpdaterProcessIds) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            try {
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+            } catch {
+                Add-CleanupError ("could not stop detached updater {0}: {1}" -f $processId, $_.Exception.Message)
+            }
+        }
+    }
+}
+
 try {
     Import-Module ScheduledTasks -ErrorAction Stop
     if (Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue) {
         Fail 'scheduled task remote-code-bridge already exists'
     }
+    $TestOwnsTask = $true
 
     New-Item -ItemType Directory -Force -Path $Profile, $Release, $FakeBin | Out-Null
     $sshConfig = Join-Path $Profile '.ssh/config'
@@ -111,9 +149,13 @@ public static class FakeSsh
                 string text = Encoding.UTF8.GetString(buffer.ToArray());
                 string markerPrefix = "REMOTE_CODE_BRIDGE_" + "TOKEN=";
                 int index = text.IndexOf(markerPrefix, StringComparison.Ordinal);
+                if (joined.Contains("cat >"))
+                    File.AppendAllText(log, "remote-file-input=" + buffer.Length + Environment.NewLine);
                 if (index >= 0)
-                    File.AppendAllText(log, text.Substring(index, Math.Min(86, text.Length - index)) + Environment.NewLine);
-                else
+                    File.AppendAllText(log, "remote-config-token-present" + Environment.NewLine);
+                if (text.StartsWith("native-test-remote-payload-v1", StringComparison.Ordinal))
+                    File.AppendAllText(log, "remote-payload-marker" + Environment.NewLine);
+                if (!joined.Contains("cat >") && index < 0)
                     File.AppendAllText(log, "stdin-bytes=" + buffer.Length + Environment.NewLine);
             }
         }
@@ -146,7 +188,7 @@ public static class FakeSsh
     $hostAsset = Join-Path $Release 'remote-code-bridge-x86_64-pc-windows-msvc.exe'
     $remoteAsset = Join-Path $Release 'remote-code-bridge-x86_64-unknown-linux-musl'
     Copy-Item -LiteralPath $Binary -Destination $hostAsset
-    Copy-Item -LiteralPath $Binary -Destination $remoteAsset
+    Set-Content -LiteralPath $remoteAsset -Encoding ascii -Value 'native-test-remote-payload-v1'
     foreach ($asset in @($hostAsset, $remoteAsset)) {
         $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
         Set-Content -LiteralPath "$asset.sha256" -Encoding ascii -Value "$hash  $(Split-Path -Leaf $asset)"
@@ -163,6 +205,7 @@ public static class FakeSsh
     $env:RCB_RELEASE_URL = "http://127.0.0.1:$Port"
     $env:RCB_UPDATE_MARKER = $Marker
     $env:RCB_FAKE_SSH_LOG = $SshLog
+    [Environment]::SetEnvironmentVariable('HOME', $Profile, 'User')
     Wait-Condition {
         try { (Invoke-WebRequest -UseBasicParsing -Uri "$env:RCB_RELEASE_URL/install.ps1").StatusCode -eq 200 } catch { $false }
     } 'local release server did not start'
@@ -174,8 +217,13 @@ public static class FakeSsh
     if (-not (Test-Path -LiteralPath $hostConfig -PathType Leaf)) { Fail 'installer did not create host config' }
     $token = Get-EnvFileValue $hostConfig 'REMOTE_CODE_BRIDGE_TOKEN'
     if ($token -notmatch '^[0-9A-Fa-f]{64}$') { Fail 'installer did not create a valid host token' }
-    if (-not (Select-String -LiteralPath $SshLog -Pattern 'Linux' -Quiet)) { Fail 'installer did not probe the SSH target' }
-    if (-not (Select-String -LiteralPath $SshLog -Pattern 'REMOTE_CODE_BRIDGE_TOKEN=' -Quiet)) { Fail 'installer did not transfer remote config' }
+    if (-not (Select-String -LiteralPath $SshLog -Pattern 'uname -s; uname -m' -Quiet)) { Fail 'installer did not probe the SSH target' }
+    if (-not (Select-String -LiteralPath $SshLog -Pattern 'remote-config-token-present' -Quiet)) { Fail 'installer did not transfer remote config' }
+    if (-not (Select-String -LiteralPath $SshLog -Pattern 'remote-payload-marker' -Quiet)) { Fail 'installer did not transfer the remote payload' }
+    $transferBefore = @(Select-String -LiteralPath $SshLog -Pattern '^remote-file-input=').Count
+    if ($transferBefore -lt 2) { Fail 'installer did not transfer both remote payloads' }
+    $configBefore = @(Select-String -LiteralPath $SshLog -Pattern '^remote-config-token-present$').Count
+    $payloadBefore = @(Select-String -LiteralPath $SshLog -Pattern '^remote-payload-marker$').Count
     $task = Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction Stop
     if ($task.Principal.LogonType.ToString() -ne 'Interactive') { Fail 'scheduled task logon type is not Interactive' }
     if ($task.Principal.RunLevel.ToString() -ne 'Limited') { Fail 'scheduled task run level is not Limited' }
@@ -183,27 +231,68 @@ public static class FakeSsh
         try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:39731/healthz').StatusCode -eq 200 } catch { $false }
     } 'installed scheduled task did not start the host service'
 
+    foreach ($processId in @(Get-DetachedUpdaterIds)) { [void]$UpdaterBaseline.Add($processId) }
     & $hostBin update devbox | Out-Null
+    for ($attempt = 0; $attempt -lt 50 -and $UpdaterProcessIds.Count -eq 0; $attempt++) {
+        Remember-DetachedUpdaters
+        if ($UpdaterProcessIds.Count -eq 0) { Start-Sleep -Milliseconds 100 }
+    }
     Wait-Condition { Test-Path -LiteralPath $Marker -PathType Leaf } 'Windows updater did not finish the local installer'
     if ((Get-Content -LiteralPath $Marker -Raw).Trim() -ne 'updated') { Fail 'Windows updater marker was incorrect' }
+    $transferAfter = @(Select-String -LiteralPath $SshLog -Pattern '^remote-file-input=').Count
+    if ($transferAfter -lt ($transferBefore + 2)) { Fail 'Windows updater did not re-transfer both remote payloads' }
+    $configAfter = @(Select-String -LiteralPath $SshLog -Pattern '^remote-config-token-present$').Count
+    if ($configAfter -lt ($configBefore + 1)) { Fail 'Windows updater did not re-transfer remote config' }
+    $payloadAfter = @(Select-String -LiteralPath $SshLog -Pattern '^remote-payload-marker$').Count
+    if ($payloadAfter -lt ($payloadBefore + 1)) { Fail 'Windows updater did not re-transfer remote binary' }
     $tokenAfter = Get-EnvFileValue $hostConfig 'REMOTE_CODE_BRIDGE_TOKEN'
     if ($tokenAfter -ne $token) { Fail 'Windows updater did not preserve the host token' }
     $task = Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction Stop
     if ($task.Principal.LogonType.ToString() -ne 'Interactive' -or $task.Principal.RunLevel.ToString() -ne 'Limited') { Fail 'updated scheduled task principal changed' }
+    Wait-Condition {
+        try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:39731/healthz').StatusCode -eq 200 } catch { $false }
+    } 'updated scheduled task did not restart the host service'
     Write-Output 'native Windows install/update flow passed'
+} catch {
+    $TestFailure = $_.Exception
 } finally {
-    $task = Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
-    if ($null -ne $task) {
-        Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName 'remote-code-bridge' -Confirm:$false -ErrorAction SilentlyContinue
+    Stop-DetachedUpdater
+    if ($TestOwnsTask) {
+        try {
+            $task = Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
+            if ($null -ne $task) { Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue }
+        } catch { Add-CleanupError ("could not stop test scheduled task: {0}" -f $_.Exception.Message) }
+        if ($null -ne $task) {
+            try {
+                Unregister-ScheduledTask -TaskName 'remote-code-bridge' -Confirm:$false -ErrorAction Stop
+            } catch { Add-CleanupError ("could not unregister test scheduled task: {0}" -f $_.Exception.Message) }
+        }
+        if (Get-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue) {
+            Add-CleanupError 'test scheduled task still exists after cleanup'
+        }
     }
     if ($null -ne $ServerJob) {
-        Stop-Job -Job $ServerJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $ServerJob -Force -ErrorAction SilentlyContinue
+        try { Stop-Job -Job $ServerJob -ErrorAction Stop } catch { Add-CleanupError ("could not stop release server: {0}" -f $_.Exception.Message) }
+        try { Remove-Job -Job $ServerJob -Force -ErrorAction Stop } catch { Add-CleanupError ("could not remove release server: {0}" -f $_.Exception.Message) }
     }
-    [Environment]::SetEnvironmentVariable('Path', $OriginalUserPath, 'User')
+    try {
+        [Environment]::SetEnvironmentVariable('Path', $OriginalUserPath, 'User')
+        if ([Environment]::GetEnvironmentVariable('Path', 'User') -ne $OriginalUserPath) { Add-CleanupError 'user PATH was not restored' }
+    } catch { Add-CleanupError ("could not restore user PATH: {0}" -f $_.Exception.Message) }
+    try {
+        [Environment]::SetEnvironmentVariable('HOME', $OriginalUserHome, 'User')
+        if ([Environment]::GetEnvironmentVariable('HOME', 'User') -ne $OriginalUserHome) { Add-CleanupError 'user HOME was not restored' }
+    } catch { Add-CleanupError ("could not restore user HOME: {0}" -f $_.Exception.Message) }
     foreach ($name in $SavedProcess.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $SavedProcess[$name], 'Process')
+        try { [Environment]::SetEnvironmentVariable($name, $SavedProcess[$name], 'Process') }
+        catch { Add-CleanupError ("could not restore process {0}: {1}" -f $name, $_.Exception.Message) }
     }
-    Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    try { Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction Stop }
+    catch { Add-CleanupError ("could not remove temporary directory: {0}" -f $_.Exception.Message) }
 }
+
+if ($null -ne $TestFailure) {
+    if ($CleanupErrors.Count -gt 0) { throw ("{0}; cleanup failed: {1}" -f $TestFailure.Message, ($CleanupErrors -join '; ')) }
+    throw $TestFailure
+}
+if ($CleanupErrors.Count -gt 0) { throw ("cleanup failed: " + ($CleanupErrors -join '; ')) }

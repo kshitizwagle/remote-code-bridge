@@ -3,7 +3,7 @@ services:
     build: .
     command: /usr/local/bin/remote-entrypoint.sh
     volumes:
-      - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"
+      - "${RCB_PUBLIC_DIR:?RCB_PUBLIC_DIR is required}:/public:ro"
 
   host:
     build: .
@@ -12,3 +12,4 @@ services:
     volumes:
       - "../../../:/repo:ro"
       - "${RCB_FIXTURE_DIR:?RCB_FIXTURE_DIR is required}:/fixture"
+      - "${RCB_PUBLIC_DIR:?RCB_PUBLIC_DIR is required}:/public"
