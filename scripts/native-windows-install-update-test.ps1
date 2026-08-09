@@ -66,6 +66,7 @@ function Start-ReleaseServer([string]$Directory, [int]$ListenPort) {
                         if (Test-Path -LiteralPath $path -PathType Leaf) {
                             $bytes = [IO.File]::ReadAllBytes($path)
                             $context.Response.StatusCode = 200
+                            $context.Response.ContentType = if ($relative -like '*.ps1') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' }
                             $context.Response.ContentLength64 = $bytes.Length
                             $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
                         } else {
