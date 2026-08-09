@@ -181,6 +181,29 @@ probe() {
   REMOTE_ARCH=$(arch "$(printf '%s\n' "$out" | sed -n '2p')")
   [ "$REMOTE_OS" = Linux ]
 }
+ssh_identity() {
+  out=$(ssh -G "$1" 2>/dev/null) || return 1
+  host=$(printf '%s\n' "$out" | awk '$1 == "hostname" {print $2; exit}')
+  user=$(printf '%s\n' "$out" | awk '$1 == "user" {print $2; exit}')
+  port=$(printf '%s\n' "$out" | awk '$1 == "port" {print $2; exit}')
+  [ -n "$host" ] && [ -n "$user" ] && [ -n "$port" ] || return 1
+  safe_credential "$host" && safe_credential "$user" && safe_credential "$port" || return 1
+  printf '%s\t%s\t%s\n' "$host" "$user" "$port"
+}
+collect_aliases() {
+  target_identity=$(ssh_identity "$TARGET") || die "could not resolve SSH alias $TARGET"
+  TARGET_ALIASES="$WORK/target-aliases"; : >"$TARGET_ALIASES"
+  while IFS= read -r name; do
+    if identity=$(ssh_identity "$name" 2>/dev/null) && [ "$identity" = "$target_identity" ]; then
+      printf '%s\n' "$name" >>"$TARGET_ALIASES"
+    fi
+  done <"$ALIASES"
+  grep -Fqx "$TARGET" "$TARGET_ALIASES" 2>/dev/null || printf '%s\n' "$TARGET" >>"$TARGET_ALIASES"
+  TARGET_ALLOWED=
+  while IFS= read -r name; do
+    TARGET_ALLOWED=${TARGET_ALLOWED:+$TARGET_ALLOWED,}$name
+  done <"$TARGET_ALIASES"
+}
 strip_path_block() {
   awk '/^# >>> remote-code-bridge PATH >>>$/ {x=1;next} /^# <<< remote-code-bridge PATH <<<$/{x=0;next} !x{print}' "$1" >"$2"
 }
@@ -202,7 +225,11 @@ ssh_forward() {
   awk '/^# >>> remote-code-bridge include >>>$/ {x=1;next} /^# <<< remote-code-bridge include <<<$/{x=0;next} !x{print}' "$SSH_CONFIG" >"$WORK/ssh"
   { printf '%s\n' '# >>> remote-code-bridge include >>>' "Include $mcfg" '# <<< remote-code-bridge include <<<'; cat "$WORK/ssh"; } >"$WORK/newssh"
   atomic "$WORK/newssh" "$SSH_CONFIG" 600 follow
-  { printf 'Host %s\n' "$TARGET"; printf '%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes'; } >"$WORK/managed"
+  {
+    printf 'Host'
+    while IFS= read -r alias; do printf ' %s' "$alias"; done <"$TARGET_ALIASES"
+    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes'
+  } >"$WORK/managed"
   atomic "$WORK/managed" "$mcfg" 600
 }
 service() {
@@ -271,12 +298,14 @@ TARGET=$1; [ -z "$TARGET" ] || valid_alias "$TARGET" || die 'SSH alias contains 
 HOST_OS=$(uname -s); HOST_ARCH=$(arch "$(uname -m)"); HOST_TARGET=$(asset "$HOST_OS" "$HOST_ARCH" host)
 SSH_CONFIG=$RCB_SSH_CONFIG; [ -n "$SSH_CONFIG" ] || SSH_CONFIG="$HOME/.ssh/config"
 ALIASES="$WORK/aliases"; SEEN="$WORK/seen"; : >"$ALIASES"; : >"$SEEN"
+read_config "$SSH_CONFIG" 0
 if [ -n "$TARGET" ]; then probe "$TARGET" explicit || die "cannot reach Linux SSH alias $TARGET"
 else
-  read_config "$SSH_CONFIG" 0; [ -s "$ALIASES" ] || die "no concrete SSH Host aliases found in $SSH_CONFIG; pass one explicitly"
+  [ -s "$ALIASES" ] || die "no concrete SSH Host aliases found in $SSH_CONFIG; pass one explicitly"
   while IFS= read -r n; do if probe "$n" discovery; then TARGET=$n; break; fi; done <"$ALIASES"
   [ -n "$TARGET" ] || die 'no configured SSH alias was reachable as Linux; pass an alias explicitly after fixing SSH access'
 fi
+collect_aliases
 REMOTE_TARGET=$(asset "$REMOTE_OS" "$REMOTE_ARCH" remote)
 HOST_BIN="$HOME/.local/bin/remote-code-bridge"; HOST_CONFIG="$HOME/.config/remote-code-bridge/host.env"; REMOTE_CONFIG="$WORK/remote.env"
 host_release=$(fetch "$HOST_TARGET"); remote_release=$(fetch "$REMOTE_TARGET"); atomic "$host_release" "$HOST_BIN" 755
@@ -291,7 +320,7 @@ case "$code" in
 esac
 [ -n "$CODE_BIN" ] && [ -x "$CODE_BIN" ] || die 'could not find executable VS Code code command in PATH'
 dry_run=$(value REMOTE_CODE_BRIDGE_DRY_RUN "$HOST_CONFIG"); [ -n "$dry_run" ] || dry_run=0
-{ printf '%s\n' "REMOTE_CODE_BRIDGE_BIND=$bind" 'REMOTE_CODE_BRIDGE_PORT=39731'; printf 'REMOTE_CODE_BRIDGE_TOKEN=%s\nREMOTE_CODE_BRIDGE_CODE_BIN=%s\nREMOTE_CODE_BRIDGE_DEFAULT_HOST=%s\nREMOTE_CODE_BRIDGE_ALLOWED_HOSTS=%s\n' "$token" "$CODE_BIN" "$TARGET" "$TARGET"; printf 'REMOTE_CODE_BRIDGE_DRY_RUN=%s\n' "$dry_run"; } >"$WORK/host.env"
+{ printf '%s\n' "REMOTE_CODE_BRIDGE_BIND=$bind" 'REMOTE_CODE_BRIDGE_PORT=39731'; printf 'REMOTE_CODE_BRIDGE_TOKEN=%s\nREMOTE_CODE_BRIDGE_CODE_BIN=%s\nREMOTE_CODE_BRIDGE_DEFAULT_HOST=%s\nREMOTE_CODE_BRIDGE_ALLOWED_HOSTS=%s\n' "$token" "$CODE_BIN" "$TARGET" "$TARGET_ALLOWED"; printf 'REMOTE_CODE_BRIDGE_DRY_RUN=%s\n' "$dry_run"; } >"$WORK/host.env"
 atomic "$WORK/host.env" "$HOST_CONFIG" 600
 { printf '%s\n' 'REMOTE_CODE_BRIDGE_PORT=39731'; printf 'REMOTE_CODE_BRIDGE_HOST_ALIAS=%s\nREMOTE_CODE_BRIDGE_TOKEN=%s\n' "$TARGET" "$token"; } >"$REMOTE_CONFIG"; chmod 600 "$REMOTE_CONFIG"
 local_path; ssh_forward; remote_install "$remote_release"; service

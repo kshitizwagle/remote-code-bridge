@@ -50,7 +50,43 @@ impl Drop for RunningServer {
 }
 
 fn binary() -> String {
-    std::env::var("CARGO_BIN_EXE_remote-code-bridge").expect("Cargo supplies the binary path")
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_remote-code-bridge") {
+        return path;
+    }
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_remote_code_bridge") {
+        return path;
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let executable = if cfg!(windows) {
+        "remote-code-bridge.exe"
+    } else {
+        "remote-code-bridge"
+    };
+    let mut candidates = Vec::new();
+    if let Some(target) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target).join("debug").join(executable));
+    }
+    if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+        candidates.push(
+            manifest
+                .join("target/llvm-cov-target/debug")
+                .join(executable),
+        );
+    }
+    candidates.push(manifest.join("target/debug").join(executable));
+    if std::env::var_os("LLVM_PROFILE_FILE").is_none() {
+        candidates.push(
+            manifest
+                .join("target/llvm-cov-target/debug")
+                .join(executable),
+        );
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .expect("Cargo must build the remote-code-bridge binary")
+        .display()
+        .to_string()
 }
 
 fn unused_port() -> u16 {

@@ -9,7 +9,7 @@
 
 The standalone release installer runs on the VS Code host. It downloads a host binary and a matching remote binary, verifies SHA-256 files, then sends the remote binary and remote configuration over separate SSH standard-input streams. The token is not placed in a command argument, URL, filename, or installer output.
 
-Without an argument, the installer recursively reads OpenSSH `Include` files from `~/.ssh/config`, keeps concrete `Host` aliases only, and probes each alias in configuration order with non-interactive `uname` commands. It uses the first reachable Linux alias. For auto-discovery, every config read must be owned by the current user, not group/world-writable, and free of executable SSH directives. An explicit `install.sh alias` bypasses discovery and deliberately opts in to the user's existing SSH configuration.
+Without an argument, the installer recursively reads OpenSSH `Include` files from `~/.ssh/config`, keeps concrete `Host` aliases only, and probes each alias in configuration order with non-interactive `uname` commands. It uses the first reachable Linux alias as the canonical target, then groups every alias with the same effective hostname, user, and port. Every config read must be owned by the current user, not group/world-writable, and free of executable SSH directives; this also applies when an explicit alias is supplied.
 
 The installer writes generated configuration files:
 
@@ -20,15 +20,15 @@ remote: ~/.config/remote-code-bridge/remote.env
 
 Both configuration readers use non-empty `REMOTE_CODE_BRIDGE_*` environment variables in preference to file values. This keeps local development and CI configuration-free while normal installations need no manual edits.
 
-The installer also manages an SSH-config include for the selected alias:
+The installer also manages an SSH-config include for the equivalent alias group:
 
 ```sshconfig
-Host devbox
+Host devbox 192.168.1.100
     RemoteForward 127.0.0.1:39731 127.0.0.1:39731
     ExitOnForwardFailure yes
 ```
 
-It adds `~/.local/bin` to the current shell startup file and installs the host bridge as a systemd user service on Linux or a launchd agent on macOS. The service starts with the user login session; shell startup files only make the local commands discoverable.
+It adds `~/.local/bin` to the current shell startup file and installs the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. The service starts with the user login session; shell startup files only make the local commands discoverable. The managed SSH config applies the reverse forward to every concrete alias whose effective hostname, user, and port match the selected target, while one canonical alias remains the VS Code target. Windows uses `install.ps1`, built-in OpenSSH, and the same remote protocol.
 
 ## Request flow
 

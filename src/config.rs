@@ -50,7 +50,9 @@ impl fmt::Debug for RemoteConfig {
 }
 
 pub fn default_config_path(name: &str) -> Result<PathBuf, String> {
-    let home = env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
+    let home = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .ok_or_else(|| "HOME/USERPROFILE is not set".to_string())?;
     Ok(PathBuf::from(home)
         .join(".config/remote-code-bridge")
         .join(name))

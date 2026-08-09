@@ -4,7 +4,7 @@
 
 # remote-code-bridge
 
-Run `code .` from a Linux machine reached through SSH and open that directory in VS Code on your macOS or Linux host.
+Run `code .` from a Linux machine reached through SSH and open that directory in VS Code on your macOS, Linux, or Windows host.
 
 ```text
 remote: code . → SSH reverse tunnel → host bridge → code --remote ssh-remote+alias /remote/path
@@ -20,15 +20,30 @@ Run this on the machine that runs VS Code:
 curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s --
 ```
 
-For a reproducible install, use a versioned release URL and verify its `install.sh.sha256` before running it.
+On Windows PowerShell, run:
 
-The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target. Auto-discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
+```powershell
+irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
+```
+
+For an explicit Windows alias, set it before invoking the downloaded script:
+
+```powershell
+$env:RCB_SSH_ALIAS = 'devbox'
+irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
+```
+
+The Windows installer uses PowerShell, the built-in OpenSSH client, and a per-user Scheduled Task; VS Code’s `code` command must be available in `PATH`.
+
+For a reproducible install, use a versioned release URL and verify its matching `install.sh.sha256` or `install.ps1.sha256` before running it.
+
+The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target, then applies the same tunnel to every configured alias resolving to that target (matching effective hostname, user, and port). One canonical alias is used for the VS Code target. Discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
 
 ```sh
 curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s -- devbox
 ```
 
-The selected alias must be the same alias that VS Code Remote - SSH uses. Passing an alias skips auto-discovery's config inspection and uses your existing SSH setup. The installer needs OpenSSH, `curl`, a SHA-256 utility, and a POSIX shell. The host needs VS Code, its `code` CLI in `PATH`, and the Remote - SSH extension.
+The selected alias is the canonical VS Code Remote - SSH target; equivalent aliases share its tunnel. An explicit alias still uses the same safe config inspection so equivalent aliases can be discovered. The installer needs OpenSSH, `curl`, a SHA-256 utility, and a POSIX shell. The host needs VS Code, its `code` CLI in `PATH`, and the Remote - SSH extension.
 
 ### What installation configures
 
@@ -36,8 +51,8 @@ The selected alias must be the same alias that VS Code Remote - SSH uses. Passin
 - Generates a token unless a valid existing host token is present. The remote config is sent through SSH standard input, never as a command argument, URL, or filename.
 - Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
 - Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
-- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731` and `ExitOnForwardFailure yes` for the selected alias.
-- Starts the host bridge as a systemd user service on Linux or a launchd agent on macOS. It starts at user login, when a desktop VS Code session is available.
+- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731` and `ExitOnForwardFailure yes` for every equivalent alias.
+- Starts the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. It starts at user login, when a desktop VS Code session is available.
 
 Reconnect to the remote after installation, then run:
 
@@ -45,6 +60,8 @@ Reconnect to the remote after installation, then run:
 cd ~/project
 code .
 ```
+
+Only one SSH connection to a target can own the fixed reverse-forward port at a time. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session (or run `ssh -O exit <alias>` when control multiplexing is enabled) and reconnect.
 
 ### GitHub rate limits
 
@@ -56,6 +73,13 @@ curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/do
 ```
 
 The installer retries the download with `GH_TOKEN` only after an anonymous failure. Do not put the token in the install URL or commit it to configuration.
+
+PowerShell uses the equivalent process-local variable:
+
+```powershell
+$env:GH_TOKEN = 'github_pat_...'
+irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
+```
 
 ## How it works
 
@@ -101,7 +125,9 @@ cargo test --locked
 ./scripts/smoke-test.sh
 ```
 
-Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, or pushing a `v*`/numeric version tag, publishes the four verified platform binaries, their SHA-256 files, and a version-pinned `install.sh`; all workflow actions are pinned to immutable commits.
+Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, or pushing a `v*`/numeric version tag, publishes the five verified platform binaries, their SHA-256 files, and version-pinned `install.sh`/`install.ps1` installers; workflow actions use readable major-version references.
+
+The Linux and macOS assets are native executables and intentionally have no filename extension; the Windows asset is the `.exe` build.
 
 ## License
 
