@@ -332,7 +332,7 @@ try {
     foreach ($line in $oldSsh) { if ($line -eq '# >>> remote-code-bridge include >>>') { $inside = $true; continue }; if ($line -eq '# <<< remote-code-bridge include <<<') { $inside = $false; continue }; if (-not $inside) { $filtered.Add($line) } }
     $sshText = @('# >>> remote-code-bridge include >>>', $managedInclude, '# <<< remote-code-bridge include <<<') + $filtered
     Write-PrivateFile $sshConfig ([Text.Encoding]::UTF8.GetBytes(($sshText -join "`n") + "`n"))
-    $managedText = "Host $($targetAliases -join ' ')`n    RemoteForward 127.0.0.1:39731 127.0.0.1:39731`n    ExitOnForwardFailure yes`n"
+    $managedText = "Host $($targetAliases -join ' ')`n    RemoteForward 127.0.0.1:39731 127.0.0.1:39731`n    ExitOnForwardFailure yes`n    ServerAliveInterval 15`n    ServerAliveCountMax 3`n"
     Write-PrivateFile $managedConfig ([Text.Encoding]::UTF8.GetBytes($managedText))
 
     $remoteShell = (Get-Text (Invoke-Ssh $target 'printf %s "$SHELL"' $null)).Trim()

@@ -26,6 +26,8 @@ The installer also manages an SSH-config include for the equivalent alias group:
 Host devbox 192.168.1.100
     RemoteForward 127.0.0.1:39731 127.0.0.1:39731
     ExitOnForwardFailure yes
+    ServerAliveInterval 15
+    ServerAliveCountMax 3
 ```
 
 It adds `~/.local/bin` to the current shell startup file and installs the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. The service starts with the user login session; shell startup files only make the local commands discoverable. The managed SSH config applies the reverse forward to every concrete alias whose effective hostname, user, and port match the selected target, while one canonical alias remains the VS Code target. Windows uses `install.ps1`, built-in OpenSSH, and the same remote protocol.

@@ -34,9 +34,12 @@ The managed client configuration adds:
 ```sshconfig
 RemoteForward 127.0.0.1:39731 127.0.0.1:39731
 ExitOnForwardFailure yes
+ServerAliveInterval 15
+ServerAliveCountMax 3
 ```
 
 `ExitOnForwardFailure` prevents a login that appears healthy but cannot reach the host bridge.
+`ServerAliveInterval` and `ServerAliveCountMax` make the SSH client close an unresponsive session, releasing its remote listener after roughly 45 seconds.
 
 ## SSH discovery trust boundary
 

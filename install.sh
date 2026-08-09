@@ -228,7 +228,7 @@ ssh_forward() {
   {
     printf 'Host'
     while IFS= read -r alias; do printf ' %s' "$alias"; done <"$TARGET_ALIASES"
-    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes'
+    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes' '    ServerAliveInterval 15' '    ServerAliveCountMax 3'
   } >"$WORK/managed"
   atomic "$WORK/managed" "$mcfg" 600
 }
