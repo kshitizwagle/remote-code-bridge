@@ -253,7 +253,7 @@ chmod 600 "$t"; mv -f "$t" "$rc"
 function Install-Remote([string]$Alias, [byte[]]$Binary, [byte[]]$Config) {
     $random = [guid]::NewGuid().ToString('N')
     $remoteTmp = '$HOME/.local/bin/.remote-code-bridge.' + $random
-    Invoke-Ssh $Alias "umask 077; mkdir -p `$HOME/.local/bin; cat > $remoteTmp" $Binary | Out-Null
+    Invoke-Ssh $Alias "umask 077; mkdir -p `$HOME/.local/bin; cat > `"$remoteTmp`"" $Binary | Out-Null
     $finish = @'
 set -e
 b="$HOME/.local/bin"; c="$b/code"; t="__REMOTE_TMP__"
@@ -266,7 +266,7 @@ mv -f "$t" "$b/remote-code-bridge"; rm -f "$c"; ln -s remote-code-bridge "$c"
 '@.Replace('__REMOTE_TMP__', $remoteTmp)
     Invoke-Ssh $Alias 'sh -s' ([Text.Encoding]::UTF8.GetBytes($finish)) | Out-Null
     $configTmp = '$HOME/.config/remote-code-bridge/.remote.env.' + $random
-    Invoke-Ssh $Alias "umask 077; mkdir -p `$HOME/.config/remote-code-bridge; cat > $configTmp" $Config | Out-Null
+    Invoke-Ssh $Alias "umask 077; mkdir -p `$HOME/.config/remote-code-bridge; cat > `"$configTmp`"" $Config | Out-Null
     $configFinish = @'
 set -e
 d="$HOME/.config/remote-code-bridge"; t="__REMOTE_CONFIG__"
