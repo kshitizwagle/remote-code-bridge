@@ -1,6 +1,0 @@
-# Runtime dependencies: none.
-# The host bridge uses Python standard library only.
-
-# Required external executables:
-# - code: VS Code command-line launcher
-# - ssh: OpenSSH client, used by VS Code Remote-SSH

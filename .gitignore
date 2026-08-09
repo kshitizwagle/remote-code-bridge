@@ -19,6 +19,7 @@ remote.env
 # Build outputs
 dist/
 build/
+target/
 *.zip
 
 # Local feature worktrees

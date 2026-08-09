@@ -1,54 +1,47 @@
 # Security
 
-This tool intentionally creates a path for a remote machine to ask your host to open VS Code. Keep that path narrow.
+This project lets a remote SSH session request that your host opens VS Code on an already configured SSH alias. Keep that path narrow.
 
-## Defaults
+## Boundaries
 
-- Host daemon binds to `127.0.0.1` only.
-- Remote access happens through SSH `RemoteForward` only.
-- Requests require `Authorization: Bearer <token>`.
-- The host can restrict allowed SSH aliases with `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
-- The host runs the VS Code command using a subprocess argument list, not a shell command string.
+- The host service accepts connections only on `127.0.0.1`.
+- The remote reaches it only through the SSH `RemoteForward` installed for the selected alias.
+- `POST /open` requires an exact bearer token comparison.
+- Requests are capped at 64 KiB and must contain an absolute remote path.
+- The host may restrict aliases with `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
+- The VS Code command is launched as an argument list, never a shell command string.
 
-## Do not do this
+Do not change `REMOTE_CODE_BRIDGE_BIND` away from `127.0.0.1`. The bridge rejects non-localhost binding rather than exposing a command-opening endpoint to the network.
 
-Do not set:
+## Tokens
 
-```bash
-REMOTE_CODE_BRIDGE_BIND=0.0.0.0
-```
+`remote-code-bridge generate-token` generates a 32-byte hexadecimal token. The installer reuses a valid existing host token or generates one, writes host and remote configuration with mode `0600`, and transfers the remote configuration over SSH standard input. It does not expose the token in command arguments, URLs, filenames, or normal installer output.
 
-That would expose a local command-opening API to your network. Very convenient for attackers, which is usually considered rude.
+Treat the token like a password. Do not commit either configuration file, paste the token into issue reports, or place it in a GitHub download URL. If an anonymous release download is rate-limited, export `GH_TOKEN` in the current shell and retry the installer; it is used only for the authenticated retry.
 
-## Token handling
+The convenience command uses the mutable `latest` release. For a reproducible supply-chain check, download a versioned `install.sh` and its matching `install.sh.sha256`, verify the checksum, then run the script.
 
-Generate a token on the host:
+## SSH requirements
 
-```bash
-openssl rand -hex 32
-```
-
-Use the same token in:
-
-```text
-~/.config/remote-code-bridge/host.env
-~/.config/remote-code-bridge/remote.env
-```
-
-Both files should be mode `0600`.
-
-## SSH server requirements
-
-The remote SSH server must allow TCP forwarding. In `/etc/ssh/sshd_config`, this usually means:
+The remote SSH server must permit TCP forwarding. In `sshd_config` this normally requires:
 
 ```sshconfig
 AllowTcpForwarding yes
 ```
 
-Then restart SSH on the remote.
+The managed client configuration adds:
+
+```sshconfig
+RemoteForward 127.0.0.1:39731 127.0.0.1:39731
+ExitOnForwardFailure yes
+```
+
+`ExitOnForwardFailure` prevents a login that appears healthy but cannot reach the host bridge.
+
+## SSH discovery trust boundary
+
+Automatic alias discovery reads `~/.ssh/config` and recursively included files only when each file is owned by the current user, is not group/world-writable, and has no executable SSH directives (`Match exec`, `ProxyCommand`, `KnownHostsCommand`, `LocalCommand`, `PKCS11Provider`, or `SecurityKeyProvider`). This avoids executing configuration-controlled commands merely to discover an alias. Passing an explicit alias skips this inspection, so use that opt-in only for SSH configuration you trust.
 
 ## Threat model
 
-This protects against accidental access from other machines on the network. It does not protect you if the remote account itself is compromised and the attacker has your bridge token. In that case, the attacker can ask your host VS Code to open arbitrary paths on that remote SSH alias.
-
-That is still much narrower than arbitrary shell execution on the host, but it is not nothing.
+These controls limit accidental network access and shell injection. They do not protect against a compromised remote account that has the bridge token and can use the approved SSH alias: that account can request VS Code opens on that remote. Rotate the token by replacing both generated configuration files and restarting the host user service if you suspect exposure.
