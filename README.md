@@ -33,7 +33,7 @@ $env:RCB_SSH_ALIAS = 'devbox'
 irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
 ```
 
-The Windows installer uses PowerShell, the built-in OpenSSH client, and a per-user Scheduled Task; VS Code’s `code` command must be available in `PATH`.
+The Windows installer uses PowerShell, the built-in OpenSSH client, and a per-user Scheduled Task; it supports x64 Windows (including ARM64 systems with x64 emulation), and VS Code’s `code` command must be available in `PATH`.
 
 For a reproducible install, use a versioned release URL and verify its matching `install.sh.sha256` or `install.ps1.sha256` before running it.
 
