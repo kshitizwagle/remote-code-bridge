@@ -276,3 +276,46 @@ fn update_reruns_the_release_installer_for_the_saved_alias() {
         "alias=devbox\n"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn update_rejects_a_truncated_installer_before_execution() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TestDirectory::new("truncated-update-home");
+    home.config(
+        "host.env",
+        "REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox\nREMOTE_CODE_BRIDGE_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+    );
+    let tools = TestDirectory::new("truncated-update-tools");
+    fs::write(
+        tools.path().join("curl"),
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '#!/bin/sh' 'printf ran > "$HOME/update-ran"'
+i=0
+while [ "$i" -lt 2048 ]; do printf '%s\n' '# padding'; i=$((i + 1)); done
+printf "'\n"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(tools.path().join("curl"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let update = Command::new(binary())
+        .arg("update")
+        .env("HOME", home.path())
+        .env("PATH", path)
+        .output()
+        .unwrap();
+
+    assert!(!update.status.success());
+    assert!(
+        String::from_utf8_lossy(&update.stderr).contains("downloaded update installer is invalid")
+    );
+    assert!(!home.path().join("update-ran").exists());
+}

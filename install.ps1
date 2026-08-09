@@ -205,11 +205,11 @@ function Read-SshConfig([string]$Path, [int]$Depth = 0) {
 
 function Get-SshIdentity([string]$Alias) {
     $text = Get-Text (Invoke-Native -Arguments @('-G', $Alias) -InputBytes $null)
-    $host = ([regex]::Match($text, '(?m)^hostname\s+(\S+)')).Groups[1].Value
+    $hostname = ([regex]::Match($text, '(?m)^hostname\s+(\S+)')).Groups[1].Value
     $user = ([regex]::Match($text, '(?m)^user\s+(\S+)')).Groups[1].Value
     $port = ([regex]::Match($text, '(?m)^port\s+(\S+)')).Groups[1].Value
-    if (-not $host -or -not $user -or -not $port) { Fail "could not resolve SSH alias $Alias" }
-    return "$host`t$user`t$port"
+    if (-not $hostname -or -not $user -or -not $port) { Fail "could not resolve SSH alias $Alias" }
+    return "$hostname`t$user`t$port"
 }
 
 function Find-Target {

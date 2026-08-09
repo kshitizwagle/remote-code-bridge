@@ -4,7 +4,7 @@ use std::env;
 use std::io::Write;
 use std::process::Command;
 #[cfg(not(windows))]
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 
 const RELEASE_BASE: &str =
     "https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download";
@@ -50,6 +50,29 @@ pub fn run_update(explicit_alias: Option<&str>) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
+fn run_posix_shell(script: &[u8], arguments: &[&str]) -> Result<ExitStatus, String> {
+    let mut shell = Command::new("sh")
+        .args(arguments)
+        .env_remove("REMOTE_CODE_BRIDGE_TOKEN")
+        .env_remove("token")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not start update installer: {error}"))?;
+    let write_result = shell
+        .stdin
+        .take()
+        .ok_or_else(|| "could not open update installer input".to_string())?
+        .write_all(script);
+    let status = shell
+        .wait()
+        .map_err(|error| format!("could not finish update installer: {error}"))?;
+    if status.success() {
+        write_result.map_err(|error| format!("could not send update installer: {error}"))?;
+    }
+    Ok(status)
+}
+
+#[cfg(not(windows))]
 fn run_posix(alias: &str, url: &str) -> Result<(), String> {
     let mut curl = Command::new("curl")
         .args([
@@ -91,22 +114,10 @@ fn run_posix(alias: &str, url: &str) -> Result<(), String> {
         );
     }
 
-    let mut shell = Command::new("sh")
-        .args(["-s", "--", alias])
-        .env_remove("REMOTE_CODE_BRIDGE_TOKEN")
-        .env_remove("token")
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("could not start update installer: {error}"))?;
-    shell
-        .stdin
-        .take()
-        .ok_or_else(|| "could not open update installer input".to_string())?
-        .write_all(&output.stdout)
-        .map_err(|error| format!("could not send update installer: {error}"))?;
-    let status = shell
-        .wait()
-        .map_err(|error| format!("could not finish update installer: {error}"))?;
+    if !run_posix_shell(&output.stdout, &["-n", "-s"])?.success() {
+        return Err("downloaded update installer is invalid".into());
+    }
+    let status = run_posix_shell(&output.stdout, &["-s", "--", alias])?;
     if !status.success() {
         return Err("update installer failed".into());
     }
@@ -150,6 +161,8 @@ try {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(windows))]
+    use super::run_posix_shell;
     use super::{installer_url, is_valid_update_alias};
 
     #[test]
@@ -171,5 +184,16 @@ mod tests {
         assert!(!is_valid_update_alias(""));
         assert!(!is_valid_update_alias("-oProxyCommand=evil"));
         assert!(!is_valid_update_alias("bad alias"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn syntax_failure_takes_precedence_over_a_broken_pipe() {
+        let mut script = b")\n".to_vec();
+        script.resize(1024 * 1024, b'#');
+
+        let status = run_posix_shell(&script, &["-n", "-s"]).unwrap();
+
+        assert!(!status.success());
     }
 }
