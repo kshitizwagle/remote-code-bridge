@@ -33,6 +33,10 @@ The Windows installer uses PowerShell, the built-in OpenSSH client, and a per-us
 
 For a reproducible install, use a versioned release URL and verify its matching `install.sh.sha256` or `install.ps1.sha256` before running it.
 
+### Updating
+
+Rerun the same installer to update; it is idempotent. It downloads and verifies the current host and remote binaries, preserves a valid token and custom settings, refreshes the remote wrapper, and restarts the host service. Pass the same alias again when using an explicit install. There is no separate updater to drift from the release installer.
+
 The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target, then applies the same tunnel to every configured alias resolving to that target (matching effective hostname, user, and port). One canonical alias is used for the VS Code target. Discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
 
 ```sh
@@ -47,7 +51,7 @@ The selected alias is the canonical VS Code Remote - SSH target; equivalent alia
 - Generates a token unless a valid existing host token is present. The remote config is sent through SSH standard input, never as a command argument, URL, or filename.
 - Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
 - Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
-- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731` and `ExitOnForwardFailure yes` for every equivalent alias.
+- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731`, fails closed when forwarding cannot start, and uses SSH keepalives to release dead sessions after about 45 seconds for every equivalent alias.
 - Starts the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. It starts at user login, when a desktop VS Code session is available.
 
 Reconnect to the remote after installation, then run:
@@ -57,7 +61,7 @@ cd ~/project
 code .
 ```
 
-Only one SSH connection to a target can own the fixed reverse-forward port at a time. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session (or run `ssh -O exit <alias>` when control multiplexing is enabled) and reconnect.
+Only one SSH connection to a target can own the fixed reverse-forward port at a time. A cleanly closed session releases it immediately; a dead network session is detected after about 45 seconds. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session (or run `ssh -O exit <alias>` when control multiplexing is enabled) and reconnect.
 
 ### GitHub rate limits
 

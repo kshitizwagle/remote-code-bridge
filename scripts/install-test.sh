@@ -161,6 +161,8 @@ Host canonical 192.168.1.100 other-name
 EOF
 run_install canonical >"$TMP/equivalent-aliases.out"
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'Host canonical 192.168.1.100 other-name'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveInterval 15'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveCountMax 3'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=canonical'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_ALLOWED_HOSTS=canonical,192.168.1.100,other-name'
 assert_contains "$REMOTE_HOME/.config/remote-code-bridge/remote.env" 'REMOTE_CODE_BRIDGE_HOST_ALIAS=canonical'
