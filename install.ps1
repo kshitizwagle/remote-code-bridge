@@ -14,6 +14,7 @@ $CurrentPrincipal = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $SavedEnvironment = @{}
 
 function Fail([string]$Message) { throw "remote-code-bridge install: $Message" }
+function Step([string]$Message) { Write-Output "==> $Message" }
 
 function Protect-Environment {
     foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'RCB_GH_TOKEN', 'RCB_GH_TOKEN_HOLD', 'REMOTE_CODE_BRIDGE_TOKEN', 'token')) {
@@ -279,6 +280,7 @@ chmod 600 "$t"; mv -f "$t" "$d/remote.env"
 
 function Install-HostService([string]$HostBin) {
     Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'remote-code-bridge' -Confirm:$false -ErrorAction SilentlyContinue
     $action = New-ScheduledTaskAction -Execute $HostBin -Argument 'serve'
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId $CurrentPrincipal -LogonType Interactive -RunLevel Limited
@@ -292,17 +294,20 @@ try {
     $GitHubToken = $SavedEnvironment['GH_TOKEN']
     if ($env:PROCESSOR_ARCHITECTURE -notin @('AMD64', 'ARM64')) { Fail 'Windows x64 is required' }
     $hostArch = 'x86_64'
+    if ($SshAlias) { Step "Checking SSH alias $SshAlias" } else { Step 'Looking for a reachable Linux SSH alias' }
     $target = Find-Target
     $targetIdentity = Get-SshIdentity $target
     $targetAliases = [Collections.Generic.List[string]]::new()
     foreach ($alias in $Aliases) { if ((Get-SshIdentity $alias) -eq $targetIdentity) { $targetAliases.Add($alias) } }
     if (-not $targetAliases.Contains($target)) { $targetAliases.Add($target) }
     $allowed = $targetAliases -join ','
+    Step "Installing for SSH alias $target"
 
     $hostAsset = "remote-code-bridge-$hostArch-pc-windows-msvc.exe"
     $remoteOsArch = (Get-Text (Invoke-Ssh $target 'uname -m' $null)).Trim()
     $remoteArch = if ($remoteOsArch -match 'aarch64|arm64') { 'aarch64' } else { 'x86_64' }
     $remoteAsset = "remote-code-bridge-$remoteArch-unknown-linux-musl"
+    Step 'Downloading host and remote binaries'
     $hostSource = Download-Verified $hostAsset
     $remoteSource = Download-Verified $remoteAsset
     $hostBin = Join-Path $HomeDir '.local/bin/remote-code-bridge.exe'
@@ -327,6 +332,7 @@ try {
     }
     $remoteConfig = [Text.Encoding]::UTF8.GetBytes("REMOTE_CODE_BRIDGE_PORT=39731`nREMOTE_CODE_BRIDGE_HOST_ALIAS=$target`nREMOTE_CODE_BRIDGE_TOKEN=$token`n")
 
+    Step 'Configuring SSH tunnel and PATH'
     $sshDir = Join-Path $HomeDir '.ssh'; $managedDir = Join-Path $sshDir 'remote-code-bridge'; $managedConfig = Join-Path $managedDir 'config'; $sshConfig = Join-Path $sshDir 'config'
     $managedInclude = 'Include "' + ($managedConfig -replace '\\', '/') + '"'
     $oldSsh = if (Test-Path -LiteralPath $sshConfig) { Get-Content -LiteralPath $sshConfig } else { @() }
@@ -339,10 +345,12 @@ try {
 
     $remoteShell = (Get-Text (Invoke-Ssh $target 'printf %s "$SHELL"' $null)).Trim()
     Install-PathBlock $remoteShell
+    Step 'Installing on the remote over SSH'
     Install-Remote $target ([IO.File]::ReadAllBytes($remoteSource)) $remoteConfig
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (-not (($userPath -split ';') -contains (Join-Path $HomeDir '.local/bin'))) { [Environment]::SetEnvironmentVariable('Path', ((Join-Path $HomeDir '.local/bin') + ';' + $userPath), 'User') }
     $env:Path = (Join-Path $HomeDir '.local/bin') + ';' + $env:Path
+    Step 'Starting the host service'
     Install-HostService $hostBin
     Write-Output "remote-code-bridge install: installed for SSH aliases $allowed; reconnect, then run code . on the remote"
 } catch {

@@ -21,6 +21,7 @@ trap 'rm -rf "$WORK"' EXIT HUP INT TERM
 
 die() { printf '%s\n' "remote-code-bridge install: $*" >&2; exit 1; }
 note() { printf '%s\n' "remote-code-bridge install: $*" >&2; }
+step() { printf '==> %s\n' "$*" >&2; }
 safe_credential() { ! printf %s "$1" | LC_ALL=C grep -q '[[:cntrl:]]'; }
 arch() { case "$1" in amd64) printf x86_64;; arm64) printf aarch64;; *) printf %s "$1";; esac; }
 asset() {
@@ -301,15 +302,20 @@ HOST_OS=$(uname -s); HOST_ARCH=$(arch "$(uname -m)"); HOST_TARGET=$(asset "$HOST
 SSH_CONFIG=$RCB_SSH_CONFIG; [ -n "$SSH_CONFIG" ] || SSH_CONFIG="$HOME/.ssh/config"
 ALIASES="$WORK/aliases"; SEEN="$WORK/seen"; : >"$ALIASES"; : >"$SEEN"
 read_config "$SSH_CONFIG" 0
-if [ -n "$TARGET" ]; then probe "$TARGET" explicit || die "cannot reach Linux SSH alias $TARGET"
+if [ -n "$TARGET" ]; then
+  step "Checking SSH alias $TARGET"
+  probe "$TARGET" explicit || die "cannot reach Linux SSH alias $TARGET"
 else
+  step 'Looking for a reachable Linux SSH alias'
   [ -s "$ALIASES" ] || die "no concrete SSH Host aliases found in $SSH_CONFIG; pass one explicitly"
   while IFS= read -r n; do if probe "$n" discovery; then TARGET=$n; break; fi; done <"$ALIASES"
   [ -n "$TARGET" ] || die 'no configured SSH alias was reachable as Linux; pass an alias explicitly after fixing SSH access'
 fi
+step "Installing for SSH alias $TARGET"
 collect_aliases
 REMOTE_TARGET=$(asset "$REMOTE_OS" "$REMOTE_ARCH" remote)
 HOST_BIN="$HOME/.local/bin/remote-code-bridge"; HOST_CONFIG="$HOME/.config/remote-code-bridge/host.env"; REMOTE_CONFIG="$WORK/remote.env"
+step 'Downloading host and remote binaries'
 host_release=$(fetch "$HOST_TARGET"); remote_release=$(fetch "$REMOTE_TARGET"); atomic "$host_release" "$HOST_BIN" 755
 token=$(value REMOTE_CODE_BRIDGE_TOKEN "$HOST_CONFIG")
 valid_token "$token" || token=$("$HOST_BIN" generate-token | tr -d '\r\n')
@@ -325,5 +331,10 @@ dry_run=$(value REMOTE_CODE_BRIDGE_DRY_RUN "$HOST_CONFIG"); [ -n "$dry_run" ] ||
 { printf '%s\n' "REMOTE_CODE_BRIDGE_BIND=$bind" 'REMOTE_CODE_BRIDGE_PORT=39731'; printf 'REMOTE_CODE_BRIDGE_TOKEN=%s\nREMOTE_CODE_BRIDGE_CODE_BIN=%s\nREMOTE_CODE_BRIDGE_DEFAULT_HOST=%s\nREMOTE_CODE_BRIDGE_ALLOWED_HOSTS=%s\n' "$token" "$CODE_BIN" "$TARGET" "$TARGET_ALLOWED"; printf 'REMOTE_CODE_BRIDGE_DRY_RUN=%s\n' "$dry_run"; } >"$WORK/host.env"
 atomic "$WORK/host.env" "$HOST_CONFIG" 600
 { printf '%s\n' 'REMOTE_CODE_BRIDGE_PORT=39731'; printf 'REMOTE_CODE_BRIDGE_HOST_ALIAS=%s\nREMOTE_CODE_BRIDGE_TOKEN=%s\n' "$TARGET" "$token"; } >"$REMOTE_CONFIG"; chmod 600 "$REMOTE_CONFIG"
-local_path; ssh_forward; remote_install "$remote_release"; service
+step 'Configuring SSH tunnel and PATH'
+local_path; ssh_forward
+step 'Installing on the remote over SSH'
+remote_install "$remote_release"
+step 'Starting the host service'
+service
 note "installed for SSH alias $TARGET; reconnect, then run code . on the remote"
