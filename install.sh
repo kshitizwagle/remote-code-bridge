@@ -173,16 +173,16 @@ read_config() (
 )
 probe() {
   if [ "$2" = discovery ]; then
-    out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$1" 'uname -s; uname -m' 2>/dev/null) || return 1
+    out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
   else
-    out=$(ssh "$1" 'uname -s; uname -m' 2>/dev/null) || return 1
+    out=$(ssh "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
   fi
   REMOTE_OS=$(printf '%s\n' "$out" | sed -n '1p')
   REMOTE_ARCH=$(arch "$(printf '%s\n' "$out" | sed -n '2p')")
   [ "$REMOTE_OS" = Linux ]
 }
 ssh_identity() {
-  out=$(ssh -G "$1" 2>/dev/null) || return 1
+  out=$(ssh -G "$1" </dev/null 2>/dev/null) || return 1
   host=$(printf '%s\n' "$out" | awk '$1 == "hostname" {print $2; exit}')
   user=$(printf '%s\n' "$out" | awk '$1 == "user" {print $2; exit}')
   port=$(printf '%s\n' "$out" | awk '$1 == "port" {print $2; exit}')
@@ -274,7 +274,7 @@ chmod 600 "$t"; mv -f "$t" "$rc"
 REMOTE_PATH
 }
 remote_install() {
-  rshell=$(ssh "$TARGET" 'printf %s "$SHELL"' 2>/dev/null || printf /bin/sh); remote_path "$rshell"
+  rshell=$(ssh "$TARGET" 'printf %s "$SHELL"' </dev/null 2>/dev/null || printf /bin/sh); remote_path "$rshell"
   ssh "$TARGET" '
 set -e
 umask 077

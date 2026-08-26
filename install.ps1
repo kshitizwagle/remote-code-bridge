@@ -107,6 +107,8 @@ function Write-PrivateFile([string]$Path, [byte[]]$Bytes) {
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     [IO.File]::WriteAllBytes($temporary, $Bytes)
     Move-Item -Force -LiteralPath $temporary -Destination $Path
+    & icacls.exe $Path /setowner "$CurrentPrincipal" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "could not set owner on $Path" }
     & icacls.exe $Path /inheritance:r /grant:r "${CurrentPrincipal}:(F)" | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "could not protect $Path" }
 }
