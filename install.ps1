@@ -314,6 +314,13 @@ try {
     $hostSource = Download-Verified $hostAsset
     $remoteSource = Download-Verified $remoteAsset
     $hostBin = Join-Path $HomeDir '.local/bin/remote-code-bridge.exe'
+    # A prior install's scheduled task may still be running $hostBin, which
+    # locks the file on Windows; stop it and wait before overwriting.
+    Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
+    Get-Process -Name 'remote-code-bridge' -ErrorAction SilentlyContinue | ForEach-Object {
+        $_ | Stop-Process -Force -ErrorAction SilentlyContinue
+        $_.WaitForExit(5000)
+    }
     Write-PrivateFile $hostBin ([IO.File]::ReadAllBytes($hostSource))
     $hostConfig = Join-Path $HomeDir '.config/remote-code-bridge/host.env'
     $token = Get-EnvValue $hostConfig 'REMOTE_CODE_BRIDGE_TOKEN'
