@@ -2,6 +2,7 @@ name: release
 
 on:
   push:
+    branches: [master]
     tags:
       - 'v*'
       - '[0-9]*'
@@ -17,51 +18,17 @@ on:
 permissions:
   contents: read
 
-jobs:
-  prepare:
-    runs-on: ubuntu-24.04
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      ref: ${{ steps.version.outputs.ref }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.event.release.tag_name || github.ref_name }}
-          persist-credentials: false
-      - id: version
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_VERSION: ${{ inputs.version }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -eu
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            raw=$INPUT_VERSION
-            ref=main
-            case "$raw" in
-              v*) tag=$raw ;;
-              *) tag="v$raw" ;;
-            esac
-          else
-            tag=$RELEASE_TAG
-            [ -n "$tag" ] || tag=$REF_NAME
-            ref=$tag
-          fi
-          version="${tag#v}"
-          case "$version" in
-            ''|.*|*.|*..*|*[!0-9.]*) echo 'version must contain only numbers and dots' >&2; exit 1 ;;
-          esac
-          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_type == 'branch' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
+jobs:
   test:
-    needs: prepare
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
       - name: Check formatting
         run: cargo fmt --check
@@ -88,7 +55,8 @@ jobs:
         run: ./scripts/smoke-test.sh
 
   build-release:
-    needs: [prepare, test]
+    needs: test
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +75,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
       - name: Install Linux musl linker
         if: runner.os == 'Linux'
@@ -164,11 +131,78 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  prepare:
+    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      ref: ${{ steps.version.outputs.ref }}
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'master' || github.event.release.tag_name || github.ref_name }}
+          persist-credentials: false
+      - id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            raw=$INPUT_VERSION
+            ref=master
+            case "$raw" in
+              v*) tag=$raw ;;
+              *) tag="v$raw" ;;
+            esac
+          else
+            tag=$RELEASE_TAG
+            [ -n "$tag" ] || tag=$REF_NAME
+            ref=$tag
+          fi
+          version="${tag#v}"
+          case "$version" in
+            ''|.*|*.|*..*|*[!0-9.]*) echo 'version must contain only numbers and dots' >&2; exit 1 ;;
+          esac
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+      - id: sha
+        run: printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  find-artifacts:
+    needs: prepare
+    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -eu
+          run_id=$(gh run list --repo "${{ github.repository }}" --workflow release.yml --limit 100 \
+            --json databaseId,headSha,event,status,conclusion \
+            --jq "[.[] | select(.headSha == \"$SHA\" and .event == \"push\" and .status == \"completed\" and .conclusion == \"success\")][0].databaseId")
+          if [ -z "$run_id" ] || [ "$run_id" = null ]; then
+            echo "::error::No successful push-triggered build found for commit $SHA. Push this commit to master and let CI build it before creating a release." >&2
+            exit 1
+          fi
+          printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+
   publish:
-    needs: [prepare, build-release]
+    needs: [prepare, find-artifacts]
+    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_REF: ${{ needs.prepare.outputs.ref }}
@@ -177,10 +211,13 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           persist-credentials: false
-      - uses: actions/download-artifact@v5
-        with:
-          path: dist
-          merge-multiple: true
+      - name: Download build artifacts from prior successful run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ needs.find-artifacts.outputs.run_id }}" --repo "${{ github.repository }}" --dir dist
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
       - name: Pin installer to this release
         run: |
           sed "s#releases/latest/download#releases/download/${RELEASE_TAG}#" install.sh > dist/install.sh
