@@ -49,11 +49,11 @@ jobs:
       - name: Build test binary
         shell: pwsh
         run: cargo build --locked
+      # Windows PowerShell only: the fixture compiles a native FakeSsh.exe via
+      # `Add-Type -OutputType ConsoleApplication`, which PowerShell Core does
+      # not support. The parser tests below still run under both hosts.
       - name: Native Windows installer/update E2E with Windows PowerShell
         shell: powershell
-        run: ./scripts/native-windows-install-update-test.ps1
-      - name: Native Windows installer/update E2E with PowerShell Core
-        shell: pwsh
         run: ./scripts/native-windows-install-update-test.ps1
       - name: Test Windows installer with Windows PowerShell
         shell: powershell
