@@ -107,6 +107,10 @@ function Write-PrivateFile([string]$Path, [byte[]]$Bytes) {
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     [IO.File]::WriteAllBytes($temporary, $Bytes)
+    # Move-Item -Force clears read-only/hidden attributes but does not reliably
+    # overwrite an existing destination file on Windows; remove it first so the
+    # move always succeeds on both a fresh install and a re-run (update).
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
     Move-Item -Force -LiteralPath $temporary -Destination $Path
     & icacls.exe $Path /setowner "$CurrentPrincipal" | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "could not set owner on $Path" }
@@ -280,7 +284,6 @@ chmod 600 "$t"; mv -f "$t" "$d/remote.env"
 
 function Install-HostService([string]$HostBin) {
     Stop-ScheduledTask -TaskName 'remote-code-bridge' -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName 'remote-code-bridge' -Confirm:$false -ErrorAction SilentlyContinue
     $action = New-ScheduledTaskAction -Execute $HostBin -Argument 'serve'
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId $CurrentPrincipal -LogonType Interactive -RunLevel Limited
@@ -354,7 +357,7 @@ try {
     Install-HostService $hostBin
     Write-Output "remote-code-bridge install: installed for SSH aliases $allowed; reconnect, then run code . on the remote"
 } catch {
-    Write-Error ('DIAG ' + $_.Exception.Message + ' | line=' + $_.InvocationInfo.ScriptLineNumber + ' | stmt=' + $_.InvocationInfo.Line + ' | pos=' + $_.InvocationInfo.PositionMessage)
+    Write-Error $_.Exception.Message
     throw
 } finally {
     Restore-Environment
