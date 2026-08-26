@@ -354,7 +354,7 @@ try {
     Install-HostService $hostBin
     Write-Output "remote-code-bridge install: installed for SSH aliases $allowed; reconnect, then run code . on the remote"
 } catch {
-    Write-Error $_.Exception.Message
+    Write-Error ('DIAG ' + $_.Exception.Message + ' | line=' + $_.InvocationInfo.ScriptLineNumber + ' | stmt=' + $_.InvocationInfo.Line + ' | pos=' + $_.InvocationInfo.PositionMessage)
     throw
 } finally {
     Restore-Environment
