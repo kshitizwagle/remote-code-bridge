@@ -135,7 +135,7 @@ cargo test --locked
 ./scripts/smoke-test.sh
 ```
 
-Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Publishing a release, pushing a `v*`/numeric version tag, or choosing **Actions -> release -> Run workflow** publishes the five verified platform binaries, their SHA-256 files, and version-pinned `install.sh`/`install.ps1` installers. The manual workflow asks for a release number and builds from `main`; the `v` prefix is optional. Workflow actions use readable major-version references.
+Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Every push to `master` also builds and verifies the five platform binaries and their SHA-256 files, so `master` always has a ready set of artifacts. Publishing a release, pushing a `v*`/numeric version tag, or choosing **Actions -> release -> Run workflow** does not rebuild: it locates that commit's already-verified build and republishes the same binaries alongside version-pinned `install.sh`/`install.ps1` installers. It fails with a clear error if the target commit has no matching successful build on `master` yet — push it and let CI build it first. The manual workflow asks for a release number and targets the tip of `master`; the `v` prefix is optional. Workflow actions use readable major-version references.
 
 The Linux and macOS assets are native executables and intentionally have no filename extension; the Windows asset is the `.exe` build.
 
