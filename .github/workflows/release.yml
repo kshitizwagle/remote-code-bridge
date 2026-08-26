@@ -1,8 +1,10 @@
 name: release
 
 on:
+  workflow_run:
+    workflows: [smoke]
+    types: [completed]
   push:
-    branches: [master]
     tags:
       - 'v*'
       - '[0-9]*'
@@ -19,44 +21,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_type == 'branch' && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  test:
-    if: github.event_name == 'push' && github.ref_type == 'branch'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Check formatting
-        run: cargo fmt --check
-      - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Build test binary
-        run: cargo build --locked
-      - name: Test
-        run: cargo test --locked
-      - name: Check Rust coverage
-        run: |
-          rustup component add llvm-tools-preview
-          cargo install cargo-llvm-cov --version 0.8.7 --locked
-          cargo llvm-cov --all-targets --locked --fail-under-lines 80
-      - name: Check installer syntax
-        run: sh -n install.sh
-      - name: Test installer
-        run: ./scripts/install-test.sh
-      - name: Check Windows installer contract
-        run: ./scripts/windows-install-test.sh
-      - name: Native Linux installer/update E2E
-        run: ./scripts/native-linux-install-update-test.sh
-      - name: Smoke test
-        run: ./scripts/smoke-test.sh
-
   build-release:
-    needs: test
-    if: github.event_name == 'push' && github.ref_type == 'branch'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - name: Install Linux musl linker
         if: runner.os == 'Linux'
@@ -95,26 +66,6 @@ jobs:
           else
             shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
           fi
-      - name: Test Windows installer with Windows PowerShell
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: ./scripts/windows-parser-test.ps1
-      - name: Test Windows installer with PowerShell Core
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/windows-parser-test.ps1
-      - name: Build test binary for native installer/update E2E
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo build --locked
-      - name: Native Windows installer/update E2E with Windows PowerShell
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: ./scripts/native-windows-install-update-test.ps1
-      - name: Native Windows installer/update E2E with PowerShell Core
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/native-windows-install-update-test.ps1
       - name: Build release binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -189,9 +140,9 @@ jobs:
           set -eu
           run_id=$(gh run list --repo "${{ github.repository }}" --workflow release.yml --limit 100 \
             --json databaseId,headSha,event,status,conclusion \
-            --jq "[.[] | select(.headSha == \"$SHA\" and .event == \"push\" and .status == \"completed\" and .conclusion == \"success\")][0].databaseId")
+            --jq "[.[] | select(.headSha == \"$SHA\" and .event == \"workflow_run\" and .status == \"completed\" and .conclusion == \"success\")][0].databaseId")
           if [ -z "$run_id" ] || [ "$run_id" = null ]; then
-            echo "::error::No successful push-triggered build found for commit $SHA. Push this commit to master and let CI build it before creating a release." >&2
+            echo "::error::No successful build found for commit $SHA. Push this commit to master, let smoke tests pass, and let the resulting build finish before creating a release." >&2
             exit 1
           fi
           printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
