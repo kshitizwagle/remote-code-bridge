@@ -58,7 +58,7 @@ The selected alias is the canonical VS Code Remote - SSH target; equivalent alia
 ### What installation configures
 
 - Downloads host and remote binaries, verifies their SHA-256 files, and transfers the remote binary and its configuration over SSH.
-- Generates a token unless a valid existing host token is present. The remote config is sent through SSH standard input, never as a command argument, URL, or filename.
+- Generates a shared 64-character token unless a valid existing host token is present, then stores it in the host and remote config. You do not need to set `REMOTE_CODE_BRIDGE_TOKEN` manually for an installer-managed setup; the remote config is sent through SSH standard input, never as a command argument, URL, or filename.
 - Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
 - Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
 - Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731`, fails closed when forwarding cannot start, uses SSH keepalives to release dead sessions after about 45 seconds, and (on POSIX hosts) sets `ControlMaster auto` with a per-target `ControlPath` so a second connection to an alias multiplexes through the existing session instead of requesting a new reverse forward, for every equivalent alias.
@@ -106,6 +106,8 @@ Build locally with Rust:
 ```sh
 cargo build --release
 ```
+
+When running the binaries directly without the installer, `REMOTE_CODE_BRIDGE_TOKEN` is required. It is the shared authentication secret between the host bridge and the remote client, so use the same valid 64-character hexadecimal value in both processes. The installer generates and configures this value automatically; do not set a different shell value for an installer-managed setup because environment variables take precedence over the saved config.
 
 Run the host service with generated or environment-based configuration:
 
