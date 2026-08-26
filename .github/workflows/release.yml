@@ -129,23 +129,19 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       actions: read
+      contents: read
     outputs:
       run_id: ${{ steps.find.outputs.run_id }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          persist-credentials: false
       - id: find
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          set -eu
-          run_id=$(gh run list --repo "${{ github.repository }}" --workflow release.yml --limit 100 \
-            --json databaseId,headSha,event,status,conclusion \
-            --jq "[.[] | select(.headSha == \"$SHA\" and .event == \"workflow_run\" and .status == \"completed\" and .conclusion == \"success\")][0].databaseId")
-          if [ -z "$run_id" ] || [ "$run_id" = null ]; then
-            echo "::error::No successful build found for commit $SHA. Push this commit to master, let smoke tests pass, and let the resulting build finish before creating a release." >&2
-            exit 1
-          fi
-          printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+        run: ./scripts/find-artifacts.sh "${{ github.repository }}" release.yml
 
   publish:
     needs: [prepare, find-artifacts]

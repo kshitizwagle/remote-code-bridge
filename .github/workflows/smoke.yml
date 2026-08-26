@@ -35,6 +35,8 @@ jobs:
         run: ./scripts/install-test.sh
       - name: Check Windows installer contract
         run: ./scripts/windows-install-test.sh
+      - name: Test artifact lookup
+        run: ./scripts/find-artifacts-test.sh
       - name: Native Linux installer/update E2E
         run: ./scripts/native-linux-install-update-test.sh
       - name: Smoke test
