@@ -174,16 +174,16 @@ read_config() (
 )
 probe() {
   if [ "$2" = discovery ]; then
-    out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
+    out=$(ssh -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
   else
-    out=$(ssh "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
+    out=$(ssh -o ControlPath=none "$1" 'uname -s; uname -m' </dev/null 2>/dev/null) || return 1
   fi
   REMOTE_OS=$(printf '%s\n' "$out" | sed -n '1p')
   REMOTE_ARCH=$(arch "$(printf '%s\n' "$out" | sed -n '2p')")
   [ "$REMOTE_OS" = Linux ]
 }
 ssh_identity() {
-  out=$(ssh -G "$1" </dev/null 2>/dev/null) || return 1
+  out=$(ssh -o ControlPath=none -G "$1" </dev/null 2>/dev/null) || return 1
   host=$(printf '%s\n' "$out" | awk '$1 == "hostname" {print $2; exit}')
   user=$(printf '%s\n' "$out" | awk '$1 == "user" {print $2; exit}')
   port=$(printf '%s\n' "$out" | awk '$1 == "port" {print $2; exit}')
@@ -231,7 +231,7 @@ ssh_forward() {
   {
     printf 'Host'
     while IFS= read -r alias; do printf ' %s' "$alias"; done <"$TARGET_ALIASES"
-    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes' '    ServerAliveInterval 15' '    ServerAliveCountMax 3' '    ControlMaster auto' '    ControlPath ~/.ssh/remote-code-bridge/sockets/%C'
+    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes' '    ServerAliveInterval 15' '    ServerAliveCountMax 3' '    ControlMaster auto' '    ControlPath ~/.ssh/remote-code-bridge/%C'
   } >"$WORK/managed"
   atomic "$WORK/managed" "$mcfg" 600
 }

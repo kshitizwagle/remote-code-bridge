@@ -16,6 +16,7 @@ fail() { printf '%s\n' "FAIL: $*" >&2; exit 1; }
 assert_file() { [ -f "$1" ] || fail "missing $1"; }
 assert_contains() { grep -F -- "$2" "$1" >/dev/null || fail "$1 lacks $2"; }
 assert_not_contains() { ! grep -F -- "$2" "$1" >/dev/null || fail "$1 contains secret"; }
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
 cat >"$BIN/curl" <<'EOF'
 #!/bin/sh
@@ -67,6 +68,7 @@ case "$alias" in *'remote.env.'*) [ "${RCB_FAKE_FAIL_REMOTE_CONFIG:-}" = 1 ] && 
 case "$*" in
   *'.remote-code-bridge.tmp'*|*'.remote.env.tmp'*) exit 98 ;;
   *' -G '*|'-G '* )
+    case "$*" in *'-o ControlPath=none'*) ;; *) printf '%s\n' 'probe did not disable ControlPath' >&2; exit 88;; esac
     case "$alias" in
       canonical|192.168.1.100|other-name)
         printf '%s\n' 'hostname 192.168.1.100' 'user test-user' 'port 22' ;;
@@ -74,6 +76,7 @@ case "$*" in
     esac
     exit 0 ;;
   *'uname -s'*'uname -m'*)
+    case "$*" in *'-o ControlPath=none'*) ;; *) printf '%s\n' 'probe did not disable ControlPath' >&2; exit 88;; esac
     case "$*" in *unreachable*) exit 255;; esac
     printf '%s\n%s\n' Linux "${RCB_FAKE_REMOTE_ARCH:-x86_64}" ;;
   *'printf %s'*) printf '%s' "${RCB_FAKE_REMOTE_SHELL:-/bin/zsh}" ;;
@@ -111,7 +114,7 @@ fi
 EOF
 chmod 755 "$BIN"/*
 
-run_install() {
+run_install() (
     if [ -n "${GH_TOKEN-}" ]; then export GH_TOKEN; fi
     PATH="$BIN:$PATH" HOME="$HOME_DIR" SHELL="${RCB_TEST_SHELL:-/bin/zsh}" \
     RCB_FAKE_SSH_LOG="$TMP/ssh.log" RCB_FAKE_SERVICE_LOG="$TMP/service.log" \
@@ -124,7 +127,7 @@ run_install() {
     RCB_FAKE_REMOTE_SHELL="${RCB_TEST_REMOTE_SHELL:-/bin/zsh}" \
     RCB_RELEASE_URL=https://example.invalid/releases RCB_SSH_CONFIG="$HOME_DIR/.ssh/config" \
     "$ROOT/install.sh" "$@"
-}
+)
 
 printf '%s\n' 'Host chosen' >"$HOME_DIR/ssh-config-target"
 ln -s "$HOME_DIR/ssh-config-target" "$HOME_DIR/.ssh/config"
@@ -148,7 +151,7 @@ assert_contains "$TMP/service.log" 'restart remote-code-bridge.service'
 assert_not_contains "$TMP/ssh.log" safe-token
 assert_not_contains "$TMP/ssh.log" 'BatchMode=yes -o ConnectTimeout=5 chosen'
 [ "$(awk -F= '$1=="REMOTE_CODE_BRIDGE_TOKEN" {print $2}' "$HOME_DIR/.config/remote-code-bridge/host.env")" = "$(awk -F= '$1=="REMOTE_CODE_BRIDGE_TOKEN" {print $2}' "$REMOTE_HOME/.config/remote-code-bridge/remote.env")" ] || fail 'host and remote token differ'
-[ "$(stat -c '%a' "$REMOTE_HOME/.config/remote-code-bridge/remote.env")" = 600 ] || fail 'remote config is not 0600'
+[ "$(file_mode "$REMOTE_HOME/.config/remote-code-bridge/remote.env")" = 600 ] || fail 'remote config is not 0600'
 [ "$(sed -n '1p' "$HOME_DIR/.ssh/config")" = '# >>> remote-code-bridge include >>>' ] || fail 'managed SSH Include is not first'
 
 rm -rf "$HOME_DIR"
@@ -164,8 +167,7 @@ assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'Host canonical 192.1
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveInterval 15'
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveCountMax 3'
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlMaster auto'
-assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlPath ~/.ssh/remote-code-bridge/sockets/%C'
-[ "$(stat -c '%a' "$HOME_DIR/.ssh/remote-code-bridge/sockets")" = 700 ] || fail 'sockets directory is not 0700'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlPath ~/.ssh/remote-code-bridge/%C'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=canonical'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_ALLOWED_HOSTS=canonical,192.168.1.100,other-name'
 assert_contains "$REMOTE_HOME/.config/remote-code-bridge/remote.env" 'REMOTE_CODE_BRIDGE_HOST_ALIAS=canonical'
@@ -190,7 +192,9 @@ assert_contains "$TMP/ssh.log" reachable
 rm -rf "$HOME_DIR"
 mkdir -p "$HOME_DIR/.ssh"
 printf '%s\n' 'Host fishbox' >"$HOME_DIR/.ssh/config"
-RCB_TEST_SHELL=/usr/bin/fish RCB_TEST_REMOTE_SHELL=/usr/bin/fish run_install fishbox >"$TMP/fish.out"
+(
+    RCB_TEST_SHELL=/usr/bin/fish RCB_TEST_REMOTE_SHELL=/usr/bin/fish run_install fishbox >"$TMP/fish.out"
+)
 assert_file "$HOME_DIR/.config/fish/config.fish"
 assert_contains "$HOME_DIR/.config/fish/config.fish" 'contains -- $HOME/.local/bin $PATH; or set -gx PATH $HOME/.local/bin $PATH'
 assert_not_contains "$HOME_DIR/.config/fish/config.fish" 'case ":$PATH:"'
@@ -203,11 +207,11 @@ fi
 assert_contains "$TMP/no-alias.out" 'no concrete SSH Host aliases found'
 
 printf '%s\n' 'Host ratebox' >"$HOME_DIR/.ssh/config"
-if RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=404 run_install ratebox >"$TMP/download-404.out" 2>&1; then
+if (RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=404 run_install ratebox >"$TMP/download-404.out" 2>&1); then
     fail 'installer accepted a failed release download'
 fi
 assert_not_contains "$TMP/download-404.out" 'export GH_TOKEN and retry'
-if RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=429 run_install ratebox >"$TMP/rate-limit.out" 2>&1; then
+if (RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=429 run_install ratebox >"$TMP/rate-limit.out" 2>&1); then
     fail 'installer accepted a rate-limited release download'
 fi
 assert_contains "$TMP/rate-limit.out" 'export GH_TOKEN and retry'
@@ -215,7 +219,7 @@ GH_TOKEN=secret-token
 GITHUB_TOKEN=older-secret
 export GH_TOKEN
 export GITHUB_TOKEN
-if RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=429 run_install ratebox >"$TMP/auth-rate-limit.out" 2>&1; then
+if (RCB_TEST_CURL_FAIL=1 RCB_TEST_CURL_STATUS=429 run_install ratebox >"$TMP/auth-rate-limit.out" 2>&1); then
     fail 'installer accepted a failed authenticated release download'
 fi
 unset GH_TOKEN
@@ -262,7 +266,9 @@ asset_case() {
     mkdir -p "$HOME_DIR/.ssh"
     printf '%s\n' 'Host mapbox' >"$HOME_DIR/.ssh/config"
     : >"$TMP/curl.log"
-    RCB_TEST_HOST_OS="$1" RCB_TEST_HOST_ARCH="$2" RCB_TEST_REMOTE_ARCH="$3" run_install mapbox >"$TMP/map.out"
+    (
+        RCB_TEST_HOST_OS="$1" RCB_TEST_HOST_ARCH="$2" RCB_TEST_REMOTE_ARCH="$3" run_install mapbox >"$TMP/map.out"
+    )
     assert_contains "$TMP/curl.log" "remote-code-bridge-$4"
 }
 asset_case Linux x86_64 x86_64 x86_64-unknown-linux-musl
@@ -273,7 +279,7 @@ asset_case Darwin aarch64 aarch64 aarch64-apple-darwin
 rm -rf "$HOME_DIR" "$REMOTE_HOME"
 mkdir -p "$HOME_DIR/.ssh" "$REMOTE_HOME"
 printf '%s\n' 'Host invalid-token' >"$HOME_DIR/.ssh/config"
-if RCB_TEST_INVALID_TOKEN=1 run_install invalid-token >"$TMP/invalid-token.out" 2>&1; then
+if (RCB_TEST_INVALID_TOKEN=1 run_install invalid-token >"$TMP/invalid-token.out" 2>&1); then
     fail 'installer accepted an invalid generated token'
 fi
 assert_contains "$TMP/invalid-token.out" 'token generator returned an invalid token'
@@ -282,7 +288,7 @@ rm -rf "$HOME_DIR" "$REMOTE_HOME"
 mkdir -p "$REMOTE_HOME"
 mkdir -p "$HOME_DIR/.ssh"
 printf '%s\n' 'Host checksum' >"$HOME_DIR/.ssh/config"
-if RCB_TEST_BAD_CHECKSUM=1 run_install checksum >"$TMP/checksum.out" 2>&1; then
+if (RCB_TEST_BAD_CHECKSUM=1 run_install checksum >"$TMP/checksum.out" 2>&1); then
     fail 'installer accepted an invalid checksum'
 fi
 assert_contains "$TMP/checksum.out" 'checksum failed'
@@ -309,7 +315,7 @@ assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" "$BIN/custom-cod
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_DRY_RUN=1'
 
 rm -f "$REMOTE_HOME/.config/remote-code-bridge/remote.env"
-if RCB_TEST_FAIL_REMOTE_CONFIG=1 run_install preserve >"$TMP/partial.out" 2>&1; then
+if (RCB_TEST_FAIL_REMOTE_CONFIG=1 run_install preserve >"$TMP/partial.out" 2>&1); then
     fail 'installer accepted a failed remote config transfer'
 fi
 [ ! -e "$REMOTE_HOME/.config/remote-code-bridge/remote.env" ] || fail 'partial transfer created remote config'
@@ -323,7 +329,7 @@ fi
 rm -rf "$HOME_DIR" "$REMOTE_HOME"
 mkdir -p "$HOME_DIR/.ssh" "$REMOTE_HOME"
 printf '%s\n' 'Host unsafe-owner' >"$HOME_DIR/.ssh/config"
-if RCB_TEST_ID_UID=99999 run_install >"$TMP/unowned-config.out" 2>&1; then
+if (RCB_TEST_ID_UID=99999 run_install >"$TMP/unowned-config.out" 2>&1); then
     fail 'auto discovery trusted an unowned SSH config'
 fi
 assert_contains "$TMP/unowned-config.out" 'refusing unowned SSH config'
