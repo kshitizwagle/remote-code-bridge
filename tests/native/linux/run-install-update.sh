@@ -87,6 +87,8 @@ HOST_CONFIG="$HOME_DIR/.config/remote-code-bridge/host.env"
 assert_file "$HOST_BIN"
 assert_file "$HOST_CONFIG"
 assert_file "$HOME_DIR/.ssh/remote-code-bridge/config"
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlMaster auto'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlPath'
 assert_contains "$HOST_CONFIG" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox'
 assert_remote 'test -x "$HOME/.local/bin/remote-code-bridge"'
 assert_remote 'test -f "$HOME/.config/remote-code-bridge/remote.env"'

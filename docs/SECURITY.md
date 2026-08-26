@@ -38,10 +38,13 @@ RemoteForward 127.0.0.1:39731 127.0.0.1:39731
 ExitOnForwardFailure yes
 ServerAliveInterval 15
 ServerAliveCountMax 3
+ControlMaster auto
+ControlPath ~/.ssh/remote-code-bridge/sockets/%C
 ```
 
 `ExitOnForwardFailure` prevents a login that appears healthy but cannot reach the host bridge.
 `ServerAliveInterval` and `ServerAliveCountMax` make the SSH client close an unresponsive session, releasing its remote listener after roughly 45 seconds.
+`ControlMaster auto` and `ControlPath ~/.ssh/remote-code-bridge/sockets/%C` (POSIX hosts only) let a later connection to the same alias multiplex through an already-open master instead of requesting a second, conflicting reverse forward, and make `ssh -O exit <alias>` a reliable way to release a stale master on demand.
 
 ## SSH discovery trust boundary
 

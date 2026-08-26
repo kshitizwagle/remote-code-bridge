@@ -219,16 +219,18 @@ local_path() {
   atomic "$WORK/newrc" "$rc" 600 follow
 }
 ssh_forward() {
-  mdir="$HOME/.ssh/remote-code-bridge"; mcfg="$mdir/config"
+  mdir="$HOME/.ssh/remote-code-bridge"; mcfg="$mdir/config"; msock="$mdir/sockets"
   [ ! -L "$mdir" ] || die "refusing symlinked managed directory $mdir"
   mkdir -p "$(dirname "$SSH_CONFIG")" "$mdir"; [ -f "$SSH_CONFIG" ] || : >"$SSH_CONFIG"
+  [ ! -L "$msock" ] || die "refusing symlinked sockets directory $msock"
+  mkdir -p "$msock"
   awk '/^# >>> remote-code-bridge include >>>$/ {x=1;next} /^# <<< remote-code-bridge include <<<$/{x=0;next} !x{print}' "$SSH_CONFIG" >"$WORK/ssh"
   { printf '%s\n' '# >>> remote-code-bridge include >>>' "Include $mcfg" '# <<< remote-code-bridge include <<<'; cat "$WORK/ssh"; } >"$WORK/newssh"
   atomic "$WORK/newssh" "$SSH_CONFIG" 600 follow
   {
     printf 'Host'
     while IFS= read -r alias; do printf ' %s' "$alias"; done <"$TARGET_ALIASES"
-    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes' '    ServerAliveInterval 15' '    ServerAliveCountMax 3'
+    printf '\n%s\n' '    RemoteForward 127.0.0.1:39731 127.0.0.1:39731' '    ExitOnForwardFailure yes' '    ServerAliveInterval 15' '    ServerAliveCountMax 3' '    ControlMaster auto' '    ControlPath ~/.ssh/remote-code-bridge/sockets/%C'
   } >"$WORK/managed"
   atomic "$WORK/managed" "$mcfg" 600
 }

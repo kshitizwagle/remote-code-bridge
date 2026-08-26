@@ -163,6 +163,9 @@ run_install canonical >"$TMP/equivalent-aliases.out"
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'Host canonical 192.168.1.100 other-name'
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveInterval 15'
 assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ServerAliveCountMax 3'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlMaster auto'
+assert_contains "$HOME_DIR/.ssh/remote-code-bridge/config" 'ControlPath ~/.ssh/remote-code-bridge/sockets/%C'
+[ "$(stat -c '%a' "$HOME_DIR/.ssh/remote-code-bridge/sockets")" = 700 ] || fail 'sockets directory is not 0700'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_DEFAULT_HOST=canonical'
 assert_contains "$HOME_DIR/.config/remote-code-bridge/host.env" 'REMOTE_CODE_BRIDGE_ALLOWED_HOSTS=canonical,192.168.1.100,other-name'
 assert_contains "$REMOTE_HOME/.config/remote-code-bridge/remote.env" 'REMOTE_CODE_BRIDGE_HOST_ALIAS=canonical'
@@ -449,5 +452,14 @@ if run_install managed-dir-link >"$TMP/managed-dir-link.out" 2>&1; then
 fi
 [ ! -e "$HOME_DIR/managed-dir-target/config" ] || fail 'managed-directory symlink target was overwritten'
 assert_contains "$TMP/managed-dir-link.out" 'refusing symlink'
+
+rm -rf "$HOME_DIR"
+mkdir -p "$HOME_DIR/.ssh/remote-code-bridge" "$HOME_DIR/managed-sockets-target"
+printf '%s\n' 'Host managed-sockets-link' >"$HOME_DIR/.ssh/config"
+ln -s "$HOME_DIR/managed-sockets-target" "$HOME_DIR/.ssh/remote-code-bridge/sockets"
+if run_install managed-sockets-link >"$TMP/managed-sockets-link.out" 2>&1; then
+    fail 'installer followed a managed-sockets symlink'
+fi
+assert_contains "$TMP/managed-sockets-link.out" 'refusing symlink'
 
 printf '%s\n' 'install tests passed'

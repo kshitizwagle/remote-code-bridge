@@ -28,9 +28,11 @@ Host devbox 192.168.1.100
     ExitOnForwardFailure yes
     ServerAliveInterval 15
     ServerAliveCountMax 3
+    ControlMaster auto
+    ControlPath ~/.ssh/remote-code-bridge/sockets/%C
 ```
 
-It adds `~/.local/bin` to the current shell startup file and installs the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. The service starts with the user login session; shell startup files only make the local commands discoverable. The managed SSH config applies the reverse forward to every concrete alias whose effective hostname, user, and port match the selected target, while one canonical alias remains the VS Code target. Windows uses `install.ps1`, built-in OpenSSH, and the same remote protocol.
+It adds `~/.local/bin` to the current shell startup file and installs the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. The service starts with the user login session; shell startup files only make the local commands discoverable. The managed SSH config applies the reverse forward to every concrete alias whose effective hostname, user, and port match the selected target, while one canonical alias remains the VS Code target. On POSIX hosts, `ControlMaster auto` and a per-target `ControlPath` let repeat or concurrent connections to an alias multiplex through one master connection instead of renegotiating the reverse forward; `install.ps1` does not set these, since Win32-OpenSSH's support for them is unreliable. Windows uses `install.ps1`, built-in OpenSSH, and the same remote protocol.
 
 ## Request flow
 

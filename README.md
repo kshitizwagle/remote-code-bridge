@@ -61,7 +61,7 @@ The selected alias is the canonical VS Code Remote - SSH target; equivalent alia
 - Generates a token unless a valid existing host token is present. The remote config is sent through SSH standard input, never as a command argument, URL, or filename.
 - Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
 - Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
-- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731`, fails closed when forwarding cannot start, and uses SSH keepalives to release dead sessions after about 45 seconds for every equivalent alias.
+- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731`, fails closed when forwarding cannot start, uses SSH keepalives to release dead sessions after about 45 seconds, and (on POSIX hosts) sets `ControlMaster auto` with a per-target `ControlPath` so a second connection to an alias multiplexes through the existing session instead of requesting a new reverse forward, for every equivalent alias.
 - Starts the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. It starts at user login, when a desktop VS Code session is available.
 
 Reconnect to the remote after installation, then run:
@@ -71,7 +71,7 @@ cd ~/project
 code .
 ```
 
-Only one SSH connection to a target can own the fixed reverse-forward port at a time. A cleanly closed session releases it immediately; a dead network session is detected after about 45 seconds. If SSH reports `remote port forwarding failed for listen port 39731`, close the older session and reconnect. `ssh -O exit <alias>` works only when your own SSH config defines a `ControlPath`; otherwise close the old terminal or find the exact client with `pgrep -af 'ssh.*<alias>'` and terminate that PID.
+Only one SSH connection to a target can own the fixed reverse-forward port at a time. On POSIX hosts the managed config now sets `ControlMaster auto`, so a second connection to the same alias (for example, a VS Code Remote-SSH reconnect or a second window) multiplexes through the existing session instead of requesting a new reverse forward, which prevents most conflicts outright. A cleanly closed session still releases the port immediately; a dead network session is still detected after about 45 seconds. If SSH still reports `remote port forwarding failed for listen port 39731`, run `ssh -O exit <alias>` to close the stale master — the managed config always defines `ControlPath` now, so this works. On Windows hosts, where this multiplexing isn't configured, close the old terminal instead, or find the exact client with `pgrep -af 'ssh.*<alias>'` (or Task Manager) and terminate it.
 
 ### GitHub rate limits
 
