@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
+import sys
 from typing import Sequence
 
 from remote_code_bridge import SECRET_ENV, BridgeError
@@ -24,11 +26,19 @@ def ssh_program() -> list[str]:
     """`ssh`, or the JSON argv in RCB_SSH (used by tests to substitute a fake ssh)."""
     override = os.environ.get("RCB_SSH")
     if not override:
-        return ["ssh"]
+        return [_windows_ssh() or "ssh"] if sys.platform == "win32" else ["ssh"]
     argv = json.loads(override)
     if not isinstance(argv, list) or not argv or not all(isinstance(part, str) for part in argv):
         raise BridgeError("RCB_SSH must be a JSON list of strings")
     return argv
+
+
+def _windows_ssh() -> str | None:
+    """A 32-bit Python can't see System32\\OpenSSH (WOW64 redirection); Sysnative is the way in."""
+    if shutil.which("ssh"):
+        return None
+    candidate = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Sysnative", "OpenSSH", "ssh.exe")
+    return candidate if os.path.exists(candidate) else None
 
 
 def child_env() -> dict[str, str]:

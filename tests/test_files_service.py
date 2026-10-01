@@ -1,7 +1,7 @@
 import plistlib
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -50,10 +50,10 @@ def test_resolve_symlink_loop(tmp_path):
 
 
 def test_unit_files_quote_paths():
-    unit = systemd_unit("/opt/my python/python3", Path("/home/u/100%/rcb.pyz"))
+    unit = systemd_unit("/opt/my python/python3", PurePosixPath("/home/u/100%/rcb.pyz"))
     assert 'ExecStart="/opt/my python/python3" "/home/u/100%%/rcb.pyz" serve' in unit
     assert "Restart=always" in unit
-    plist = plistlib.loads(launchd_plist("/usr/bin/python3", Path("/x.pyz")))
+    plist = plistlib.loads(launchd_plist("/usr/bin/python3", PurePosixPath("/x.pyz")))
     assert plist["ProgramArguments"] == ["/usr/bin/python3", "/x.pyz", "serve"] and plist["KeepAlive"] is True
 
 
@@ -78,6 +78,8 @@ class Recorder:
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
 def test_service_install_and_stop(home, platform):
+    if platform == "darwin" and sys.platform == "win32":
+        pytest.skip("launchd domains use os.getuid(), which Windows lacks")
     run = Recorder()
     manager = ServiceManager(platform=platform, run=run, home=home)
     manager.stop()

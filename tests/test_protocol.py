@@ -59,7 +59,7 @@ def test_missing_host_token_is_a_server_error():
     assert handle(post({"path": "/srv"}), HostConfig()).status == 500
 
 
-@pytest.mark.parametrize("body", [b"", b"x" * (64 * 1024 + 1)])
+@pytest.mark.parametrize("body", [b"", b"x" * (64 * 1024 + 1)], ids=["empty", "too-big"])
 def test_request_size_limits(body):
     assert handle(post(body)) == Response.error(400, "invalid request size")
 

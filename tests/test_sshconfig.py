@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from remote_code_bridge import BridgeError
+from remote_code_bridge.files import restrict_windows_acl
 from remote_code_bridge.sshconfig import discover_aliases, identity, parse_line, split_words
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission checks")
@@ -13,8 +14,16 @@ def ssh_file(home, name, text):
     path = home / ".ssh" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
-    path.chmod(0o600)
+    secure(path)
     return path
+
+
+def secure(path):
+    """What `chmod 600` means on each platform (Windows temp dirs can grant other users write access)."""
+    if sys.platform == "win32":
+        restrict_windows_acl(path)
+    else:
+        path.chmod(0o600)
 
 
 def test_concrete_aliases_in_order(home):
@@ -45,7 +54,7 @@ def test_relative_includes_resolve_against_dot_ssh(home):
 def test_tilde_and_absolute_includes(home, tmp_path):
     absolute = tmp_path / "abs.conf"
     absolute.write_text("Host abs\n")
-    absolute.chmod(0o600)
+    secure(absolute)
     ssh_file(home, "config", f'Include ~/.ssh/t.conf "{absolute}"\n')
     ssh_file(home, "t.conf", "Host tilde\n")
     assert discover_aliases(home / ".ssh" / "config", home) == ["tilde", "abs"]
@@ -84,7 +93,7 @@ def test_unsafe_permissions_are_refused(home):
 def test_symlinked_config_is_followed(home, tmp_path):
     real = tmp_path / "dotfiles-ssh-config"
     real.write_text("Host dot\n")
-    real.chmod(0o600)
+    secure(real)
     (home / ".ssh").mkdir()
     os.symlink(real, home / ".ssh" / "config")
     assert discover_aliases(home / ".ssh" / "config", home) == ["dot"]
@@ -102,3 +111,13 @@ def test_identity_uses_ssh_g(fake_ssh, monkeypatch):
     monkeypatch.setenv("FAKE_SSH_G_FAIL", "broken")
     assert identity("devbox") == ("10.0.0.5", "me", "2222")
     assert identity("broken") is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
+def test_windows_file_writable_by_another_account_is_refused(home):
+    import subprocess
+
+    config = ssh_file(home, "config", "Host a\n")
+    subprocess.run(["icacls", str(config), "/grant", "*S-1-5-32-545:(M)"], check=True, capture_output=True)  # Users
+    with pytest.raises(BridgeError, match="writable by other users"):
+        discover_aliases(config, home)
