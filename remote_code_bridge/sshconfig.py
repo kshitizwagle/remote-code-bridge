@@ -141,13 +141,22 @@ $writers = @($acl.GetAccessRules($true, $true, $sid) | Where-Object {
 """
 
 
+def _windows_powershell_env(**extra: str) -> dict[str, str]:
+    """Environment for powershell.exe (Windows PowerShell 5.1). If this was started from PowerShell 7,
+    PSModulePath points at PowerShell 7's modules and 5.1 can't load Get-Acl; without the variable,
+    5.1 uses its own default."""
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    env.update(extra)
+    return env
+
+
 def _check_windows_acl(path: Path) -> None:
     """Compare SIDs, not names: names like `BUILTIN\\Administrators` are translated on some systems."""
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _ACL_SCRIPT],
         capture_output=True,
         text=True,
-        env=dict(os.environ, RCB_ACL_PATH=str(path)),
+        env=_windows_powershell_env(RCB_ACL_PATH=str(path)),
         creationflags=ssh.CREATION_FLAGS,
     )
     if result.returncode != 0:

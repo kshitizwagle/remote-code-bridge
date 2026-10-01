@@ -25,6 +25,8 @@ class BridgeServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
     # On Windows SO_REUSEADDR lets another process steal the port, so only use it on POSIX.
     allow_reuse_address = os.name != "nt"
+    # The default backlog of 5 makes macOS drop connections when many `code` commands arrive at once.
+    request_queue_size = 64
 
     def __init__(self, config: HostConfig, tunnel: TunnelSupervisor | None = None):
         self.config = config
