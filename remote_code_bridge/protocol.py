@@ -72,6 +72,8 @@ class Launcher:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env={key: value for key, value in os.environ.items() if key not in SECRET_ENV},
+                # On Windows, code.cmd would otherwise flash a console window from the windowless service.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError as error:
             self._slots.release()

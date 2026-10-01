@@ -148,16 +148,42 @@ def test_bad_request_gets_400_over_the_wire(server):
     assert raw_exchange(port_of(server), b"GARBAGE\r\n\r\n").startswith("HTTP/1.1 400 Bad Request")
 
 
+def test_a_burst_of_requests_queues_instead_of_failing(server):
+    """Found by the Docker test: `code .` in 12 sessions at once got `server busy` for some of them."""
+    results = []
+
+    def one():
+        results.append(raw_exchange(port_of(server), b"GET /healthz HTTP/1.1\r\n\r\n"))
+
+    threads = [threading.Thread(target=one) for _ in range(30)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(results) == 30 and all(r.startswith("HTTP/1.1 200") for r in results)
+
+
 def test_saturated_server_answers_busy(server, monkeypatch):
-    for _ in range(4):  # use up every connection slot
-        server._slots.acquire()
+    import remote_code_bridge.server as server_module
+
+    monkeypatch.setattr(server_module, "REQUEST_TIMEOUT", 0.2)
+    active = admitted = 0
+    while server._active.acquire(blocking=False):  # every handler slot is busy for the whole test
+        active += 1
     try:
+        # A waiting request gives up after the request timeout...
         response = raw_exchange(port_of(server), b"GET /healthz HTTP/1.1\r\n\r\n")
+        assert response.startswith("HTTP/1.1 503 Service Unavailable") and "server busy" in response
+        # ...and once the waiting room is full too, new connections are turned away at once.
+        while server._admitted.acquire(blocking=False):
+            admitted += 1
+        response = raw_exchange(port_of(server), b"GET /healthz HTTP/1.1\r\n\r\n")
+        assert response.startswith("HTTP/1.1 503 Service Unavailable")
     finally:
-        for _ in range(4):
-            server._slots.release()
-    assert response.startswith("HTTP/1.1 503 Service Unavailable")
-    assert "server busy" in response
+        for _ in range(admitted):
+            server._admitted.release()
+        for _ in range(active):
+            server._active.release()
 
 
 def test_parse_open_args():

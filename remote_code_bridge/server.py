@@ -16,7 +16,8 @@ from remote_code_bridge.protocol import HttpRequest, Launcher, Response, handle_
 from remote_code_bridge.tunnel import TunnelSupervisor
 
 log = logging.getLogger(__name__)
-MAX_CONNECTIONS = 4
+MAX_ACTIVE = 4  # requests handled at the same time
+MAX_WAITING = 64  # connections allowed to wait for a free slot; more than that are turned away
 REQUEST_TIMEOUT = 5.0
 
 
@@ -29,21 +30,32 @@ class BridgeServer(socketserver.ThreadingTCPServer):
         self.config = config
         self.tunnel = tunnel
         self.launcher = Launcher()
-        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        self._active = threading.BoundedSemaphore(MAX_ACTIVE)
+        self._admitted = threading.BoundedSemaphore(MAX_ACTIVE + MAX_WAITING)
         super().__init__((config.bind, config.port), _Handler)
 
     def process_request(self, request, client_address):  # type: ignore[no-untyped-def]
-        if not self._slots.acquire(blocking=False):
-            _send(request, Response.error(503, "server busy"), timeout=1.0)
-            self.shutdown_request(request)
+        if not self._admitted.acquire(blocking=False):
+            self._busy(request)
             return
         super().process_request(request, client_address)
 
     def process_request_thread(self, request, client_address):  # type: ignore[no-untyped-def]
+        # A burst (say, `code .` in a dozen terminals at once) queues briefly instead of failing.
         try:
-            super().process_request_thread(request, client_address)
+            if self._active.acquire(timeout=REQUEST_TIMEOUT):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    self._active.release()
+            else:
+                self._busy(request)
         finally:
-            self._slots.release()
+            self._admitted.release()
+
+    def _busy(self, request: socket.socket) -> None:
+        _send(request, Response.error(503, "server busy"), timeout=1.0)
+        self.shutdown_request(request)
 
 
 class _Handler(socketserver.BaseRequestHandler):

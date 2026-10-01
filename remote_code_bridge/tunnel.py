@@ -178,7 +178,10 @@ class TunnelSupervisor:
         with self._lock:
             self._child = None
         _remove_pid(self.pid_file, child.pid)
-        return uptime, stderr[-1] if stderr else f"ssh exited with status {child.returncode}"
+        status = (
+            child.returncode - 2**32 if child.returncode >= 2**31 else child.returncode
+        )  # Windows: -1 not 4294967295
+        return uptime, stderr[-1] if stderr else f"ssh exited with status {status}"
 
 
 # -- process helpers ------------------------------------------------------------------------------
