@@ -73,6 +73,7 @@ def test_install_sh_usage_and_missing_release(release):
 def test_install_ps1_runs_the_verified_archive(release):
     _, url = release
     env = dict(os.environ, RCB_RELEASE_URL=url, GH_TOKEN="ghp_secret")
+    env.pop("PSModulePath", None)  # as in a fresh Windows PowerShell, not one started from pwsh
     script = os.path.join(ROOT, "install.ps1")
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-SshAlias", "devbox"],

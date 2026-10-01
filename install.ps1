@@ -58,7 +58,8 @@ try {
     Get-Release $Archive $file
     Get-Release "$Archive.sha256" "$file.sha256"
     $want = ((Get-Content -LiteralPath "$file.sha256" -TotalCount 1) -split '\s+')[0].ToLowerInvariant()
-    $got = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Hash with Python rather than Get-FileHash, which is missing when PowerShell's module path is mixed up.
+    $got = (& $python -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], ''rb'').read()).hexdigest())' $file).Trim()
     if ($want -ne $got) { Fail "checksum failed for $Archive" }
 
     $installArgs = @($file, 'install')

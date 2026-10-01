@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -119,8 +120,12 @@ def test_command_builder_never_forwards_unsafe_flags():
     ]  # fmt: skip
 
 
+# Windows only runs files with a PATHEXT extension; VS Code's launcher there is code.cmd.
+CODE_NAME = "code.cmd" if sys.platform == "win32" else "code"
+
+
 def test_launch_uses_the_launcher(tmp_path):
-    code = tmp_path / "code"
+    code = tmp_path / CODE_NAME
     code.write_text("#!/bin/sh\n")
     code.chmod(0o755)
     config = HostConfig(token="token", code_bin=str(code), default_host="devbox")
@@ -136,7 +141,7 @@ def test_missing_code_binary(tmp_path):
 
 
 def test_launch_errors_are_reported(tmp_path):
-    code = tmp_path / "code"
+    code = tmp_path / CODE_NAME
     code.write_text("")
     code.chmod(0o755)
     config = HostConfig(token="token", code_bin=str(code), default_host="devbox")
