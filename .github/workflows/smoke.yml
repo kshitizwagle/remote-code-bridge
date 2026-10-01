@@ -10,56 +10,83 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Check formatting
-        run: cargo fmt --check
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ruff
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Build test binary
-        run: cargo build --locked
-      - name: Test
-        run: cargo test --locked
-      - name: Check Rust coverage
-        run: |
-          rustup component add llvm-tools-preview
-          cargo install cargo-llvm-cov --version 0.8.7 --locked
-          cargo llvm-cov --all-targets --locked --fail-under-lines 80
-      - name: Check installer syntax
-        run: sh -n install.sh
-      - name: Test installer
-        run: ./scripts/install-test.sh
-      - name: Check Windows installer contract
-        run: ./scripts/windows-install-test.sh
-      - name: Test artifact lookup
-        run: ./scripts/find-artifacts-test.sh
-      - name: Native Linux installer/update E2E
-        run: ./scripts/native-linux-install-update-test.sh
-      - name: Smoke test
-        run: ./scripts/smoke-test.sh
+        run: ruff check .
+      - name: Check formatting
+        run: ruff format --check .
 
-  windows-installer:
-    runs-on: windows-2022
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, python: '3.13', coverage: true }
+          - { os: ubuntu-22.04, python: '3.8' }
+          - { os: macos-15, python: '3.13' }
+          - { os: windows-2022, python: '3.13' }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Build test binary
-        shell: pwsh
-        run: cargo build --locked
-      # Windows PowerShell only: the fixture compiles a native FakeSsh.exe via
-      # `Add-Type -OutputType ConsoleApplication`, which PowerShell Core does
-      # not support. The parser tests below still run under both hosts.
-      - name: Native Windows installer/update E2E with Windows PowerShell
-        shell: powershell
-        run: ./scripts/native-windows-install-update-test.ps1
-      - name: Test Windows installer with Windows PowerShell
-        shell: powershell
-        run: ./scripts/windows-parser-test.ps1
-      - name: Test Windows installer with PowerShell Core
-        shell: pwsh
-        run: ./scripts/windows-parser-test.ps1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest pytest-cov
+      - name: Test (with the 80% line-coverage gate)
+        if: matrix.coverage
+        run: python -m pytest --cov=remote_code_bridge --cov-report=term-missing --cov-fail-under=80
+      - name: Test
+        if: ${{ !matrix.coverage }}
+        run: python -m pytest
+
+  # Install the way users do (`uv tool install`), then run, uninstall and remove it.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Build sdist and wheel
+        run: uv build
+      - name: uv tool install, run, uninstall
+        shell: bash
+        run: |
+          uv tool install .
+          export PATH="$(uv tool dir --bin):$PATH"
+          remote-code-bridge --version
+          remote-code-bridge generate-token
+          remote-code-bridge uninstall --yes
+          uv tool uninstall remote-code-bridge
+          hash -r  # forget bash's cached location of the removed command
+          if command -v remote-code-bridge; then echo "still installed" >&2; exit 1; fi
+
+  native-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Smoke test the single-file copy sent to remotes
+        run: ./scripts/smoke-test.sh
+      - name: End-to-end against a real sshd (install, sessions, recovery, update, uninstall)
+        run: ./scripts/native-linux-install-update-test.sh

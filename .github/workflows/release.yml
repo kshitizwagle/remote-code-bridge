@@ -1,9 +1,10 @@
 name: release
 
+# Users install straight from GitHub (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`),
+# so a release only needs a tag. This workflow tests the tagged commit and attaches the built
+# wheel and sdist, for anyone who prefers to install a fixed file.
+
 on:
-  workflow_run:
-    workflows: [smoke]
-    types: [completed]
   push:
     tags:
       - 'v*'
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release number, for example 1.1.0 (the v prefix is optional)'
+        description: 'Release number, for example 2.0.0 (the v prefix is optional)'
         required: true
         type: string
 
@@ -21,74 +22,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-release:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-          - runner: macos-15
-            target: aarch64-apple-darwin
-          - runner: windows-2022
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-      - name: Install Linux musl linker
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.target }}
-      - name: Build release binary (Unix)
-        if: runner.os != 'Windows'
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-        run: |
-          cargo build --locked --release --target ${{ matrix.target }}
-          mkdir dist
-          cp target/${{ matrix.target }}/release/remote-code-bridge dist/remote-code-bridge-${{ matrix.target }}
-          if command -v sha256sum >/dev/null; then
-            sha256sum dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
-          else
-            shasum -a 256 dist/remote-code-bridge-${{ matrix.target }} > dist/remote-code-bridge-${{ matrix.target }}.sha256
-          fi
-      - name: Build release binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo build --locked --release --target ${{ matrix.target }}
-          New-Item -ItemType Directory -Force dist | Out-Null
-          $name = 'remote-code-bridge-${{ matrix.target }}.exe'
-          Copy-Item "target/${{ matrix.target }}/release/remote-code-bridge.exe" "dist/$name"
-          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $name" | Set-Content -Encoding ascii "dist/$name.sha256"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: dist/
-          if-no-files-found: error
-
-  prepare:
-    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+  publish:
     runs-on: ubuntu-24.04
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      ref: ${{ steps.version.outputs.ref }}
-      sha: ${{ steps.sha.outputs.sha }}
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -103,77 +45,33 @@ jobs:
         run: |
           set -eu
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            raw=$INPUT_VERSION
+            case "$INPUT_VERSION" in v*) tag=$INPUT_VERSION ;; *) tag="v$INPUT_VERSION" ;; esac
             ref=master
-            case "$raw" in
-              v*) tag=$raw ;;
-              *) tag="v$raw" ;;
-            esac
           else
-            tag=$RELEASE_TAG
-            [ -n "$tag" ] || tag=$REF_NAME
+            tag=${RELEASE_TAG:-$REF_NAME}
             ref=$tag
           fi
           version="${tag#v}"
           case "$version" in
             ''|.*|*.|*..*|*[!0-9.]*) echo 'version must contain only numbers and dots' >&2; exit 1 ;;
           esac
-          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
-      - id: sha
-        run: printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  find-artifacts:
-    needs: prepare
-    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      run_id: ${{ steps.find.outputs.run_id }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
-          persist-credentials: false
-      - id: find
+          printf 'tag=%s\nref=%s\nversion=%s\n' "$tag" "$ref" "$version" >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@v6
+      - name: Check the package version matches the tag
         env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: ./scripts/find-artifacts.sh "${{ github.repository }}" release.yml
-
-  publish:
-    needs: [prepare, find-artifacts]
-    if: github.ref_type == 'tag' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      actions: read
-    env:
-      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-      RELEASE_REF: ${{ needs.prepare.outputs.ref }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
-          persist-credentials: false
-      - name: Download build artifacts from prior successful run
-        env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh run download "${{ needs.find-artifacts.outputs.run_id }}" --repo "${{ github.repository }}" --dir dist
-          find dist -mindepth 2 -type f -exec mv -t dist {} +
-          find dist -mindepth 1 -type d -empty -delete
-      - name: Pin installer to this release
-        run: |
-          sed "s#releases/latest/download#releases/download/${RELEASE_TAG}#" install.sh > dist/install.sh
-          sed "s#releases/latest/download#releases/download/${RELEASE_TAG}#" install.ps1 > dist/install.ps1
-          chmod 755 dist/install.sh
-          (cd dist && sha256sum install.sh > install.sh.sha256 && sha256sum install.ps1 > install.ps1.sha256)
+          found=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' remote_code_bridge/__init__.py)
+          [ "$found" = "$VERSION" ] || { echo "remote_code_bridge/__init__.py says $found, the tag says $VERSION" >&2; exit 1; }
+      - name: Test
+        run: uv run --with pytest python -m pytest
+      - name: Build
+        run: uv build
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_REF: ${{ steps.version.outputs.ref }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber

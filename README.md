@@ -1,145 +1,142 @@
-[![release](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/release.yml)
+[![smoke](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/smoke.yml/badge.svg)](https://github.com/kshitizwagle/remote-code-bridge/actions/workflows/smoke.yml)
 
 ---
 
 # remote-code-bridge
 
-Run `code .` from a Linux machine reached through SSH and open that directory in VS Code on your macOS, Linux, or Windows host.
+Run `code .` on a Linux machine you reached through SSH, and that directory opens in VS Code on your Windows, macOS, or Linux machine.
 
 ```text
-remote: code . → SSH reverse tunnel → host bridge → code --remote ssh-remote+alias /remote/path
+remote: code .  →  SSH tunnel  →  bridge on your machine  →  code --remote ssh-remote+devbox /remote/path
 ```
 
-The release contains one Rust binary. It runs as the host service and, when installed remotely as `code`, as the client. There is no Python, Rust toolchain, or other language runtime required after installation.
+```sh
+uv tool install git+https://github.com/kshitizwagle/remote-code-bridge
+remote-code-bridge install devbox
+```
+
+## Features
+
+- **Works from Windows, macOS, and Linux.** Your machine (where VS Code runs) can be any of the three; the remote is any Linux box you reach over SSH.
+- **Every SSH session works, however many you open.** Open ten terminals to the same remote, close them in any order, let VS Code's own Remote-SSH connection come and go: `code .` works in all of them. No more "remote port forwarding failed for listen port" errors.
+- **Heals itself.** One small bridge on your machine owns the tunnel, not any single terminal. After sleep, Wi-Fi changes, a dropped connection, or a remote reboot it reconnects on its own (dead links are noticed within about 45 seconds) and clears any leftover from the old connection first.
+- **Handles bursts.** Many `code` commands at the same moment queue up for an instant instead of failing.
+- **Feels like the real `code`.** `code .`, `code some/dir`, `code -r` / `--reuse-window`, `code -n` / `--new-window`, `code -g file:line` / `--goto`. Relative paths and `..` are resolved on the remote.
+- **Installs like any Python tool.** `uv tool install` (or `pip install`) straight from GitHub. One command then sets up the remote, and the remote only needs `python3`.
+- **Your choice of how it runs.** Let it start at login as a background service (a systemd user service on Linux, a launchd agent on macOS, a Scheduled Task on Windows that keeps running on battery with no time limit), or run `remote-code-bridge serve` yourself when you want it.
+- **Uninstalls without a trace.** Each machine keeps a record of exactly what was installed: files, folders it had to create, lines added to shell startup files, the service. `remote-code-bridge uninstall` removes exactly that, on both machines, and leaves everything that was there before.
+- **Knows your aliases.** Finds a reachable Linux remote in your `~/.ssh/config` (following `Include` files), asks which one when several different remotes are reachable, and treats aliases that reach the same machine (say `devbox` and `devbox.lan`) as one. `ProxyCommand`/`ProxyJump` jump hosts are fine.
+- **Leaves your SSH config alone.** Nothing is added to `~/.ssh/config`. Installations from version 1 are cleaned up automatically.
+- **Private by design.** The bridge listens only on your machine's `127.0.0.1`. On the remote, the tunnel is a socket in a directory only your account can open. Every request carries a random 64-character token that never appears on a command line. VS Code is started without a shell, and only safe flags are passed through. See [Security](docs/SECURITY.md).
+- **Tiny and dependency-free.** Plain Python 3.8+, standard library only.
+
+## Requirements
+
+- **Your machine:** Python 3.8+, [uv](https://docs.astral.sh/uv/) (or pip), OpenSSH, VS Code with its `code` command in `PATH`, and the Remote - SSH extension.
+- **The remote:** Linux with `python3` 3.8+.
+- **SSH login without a prompt** from your machine to the remote: a key without a passphrase, or your key loaded into ssh-agent (`ssh-add`; on Windows start the *OpenSSH Authentication Agent* service first). The bridge connects by itself, so it can't type a password.
 
 ## Install
 
-Run this on the machine that runs VS Code:
-
 ```sh
-curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s --
+uv tool install git+https://github.com/kshitizwagle/remote-code-bridge
+remote-code-bridge install devbox
 ```
 
-On Windows PowerShell, run:
+Replace `devbox` with your SSH alias from `~/.ssh/config`, or leave it out to let the installer find a reachable Linux alias. It asks whether to start the bridge automatically when you log in; answer up front with `--service` or `--no-service`. It then checks end to end that `code .` will work.
 
-```powershell
-irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
-```
-
-For an explicit Windows alias, set it before invoking the downloaded script:
-
-```powershell
-$env:RCB_SSH_ALIAS = 'devbox'
-irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
-```
-
-The Windows installer uses PowerShell, the built-in OpenSSH client, and a per-user Scheduled Task; it supports x64 Windows (including ARM64 systems with x64 emulation), and VS Code’s `code` command must be available in `PATH`.
-
-For a reproducible install, use a versioned release URL and verify its matching `install.sh.sha256` or `install.ps1.sha256` before running it.
-
-### Updating
-
-Update an existing installation from the host with:
-
-```sh
-remote-code-bridge update
-```
-
-It reads the saved SSH alias, downloads and verifies the current host and remote binaries, preserves a valid token and custom settings, refreshes the remote wrapper, and restarts the host service. Use `remote-code-bridge update <ssh-alias>` if the saved host config is missing or stale. Rerunning the same installer remains an equivalent recovery path.
-
-The installer finds concrete aliases from `~/.ssh/config`, recursively follows `Include` files, ignores wildcard and negated `Host` entries, and probes candidates in configuration order. It installs to the first reachable Linux target, then applies the same tunnel to every configured alias resolving to that target (matching effective hostname, user, and port). One canonical alias is used for the VS Code target. Discovery refuses an SSH config it reads when it is not owned by you, is group/world-writable, or contains executable SSH directives. Password-only targets cannot be probed non-interactively. Configure key-based access or explicitly opt in to an alias:
-
-```sh
-curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s -- devbox
-```
-
-The selected alias is the canonical VS Code Remote - SSH target; equivalent aliases share its tunnel. An explicit alias still uses the same safe config inspection so equivalent aliases can be discovered. The installer needs OpenSSH, `curl`, a SHA-256 utility, and a POSIX shell. The host needs VS Code, its `code` CLI in `PATH`, and the Remote - SSH extension.
-
-### What installation configures
-
-- Downloads host and remote binaries, verifies their SHA-256 files, and transfers the remote binary and its configuration over SSH.
-- Generates a shared 64-character token unless a valid existing host token is present, then stores it in the host and remote config. You do not need to set `REMOTE_CODE_BRIDGE_TOKEN` manually for an installer-managed setup; the remote config is sent through SSH standard input, never as a command argument, URL, or filename.
-- Installs `~/.local/bin/remote-code-bridge` on both machines and a remote `~/.local/bin/code` link. It refuses to replace an unrelated remote `code` command.
-- Adds `~/.local/bin` to the active Zsh, Bash, or Fish startup file, with `.profile` as the fallback.
-- Adds a managed include to `~/.ssh/config`; that include configures `RemoteForward 127.0.0.1:39731 127.0.0.1:39731`, fails closed when forwarding cannot start, uses SSH keepalives to release dead sessions after about 45 seconds, and (on POSIX hosts) sets `ControlMaster auto` with a per-target `ControlPath` so a second connection to an alias multiplexes through the existing session instead of requesting a new reverse forward, for every equivalent alias.
-- Starts the host bridge as a systemd user service on Linux, a launchd agent on macOS, or a per-user Scheduled Task on Windows. It starts at user login, when a desktop VS Code session is available.
-
-Reconnect to the remote after installation, then run:
+Then, in any SSH session on the remote:
 
 ```sh
 cd ~/project
 code .
 ```
 
-Only one SSH connection to a target can own the fixed reverse-forward port at a time. On POSIX hosts the managed config now sets `ControlMaster auto`, so a second connection to the same alias (for example, a VS Code Remote-SSH reconnect or a second window) multiplexes through the existing session instead of requesting a new reverse forward, which prevents most conflicts outright. A cleanly closed session still releases the port immediately; a dead network session is still detected after about 45 seconds. If SSH still reports `remote port forwarding failed for listen port 39731`, run `ssh -O exit <alias>` to close the stale master — the managed config always defines `ControlPath` now, so this works. On Windows hosts, where this multiplexing isn't configured, close the old terminal instead, or find the exact client with `pgrep -af 'ssh.*<alias>'` (or Task Manager) and terminate it.
+If you chose not to install the service, keep `remote-code-bridge serve` running on your machine while you work.
 
-### GitHub rate limits
-
-If the installer reports a GitHub `403` or `429`, create a GitHub token with access to public releases, export it only in your current shell, and retry:
+<details>
+<summary>Without uv</summary>
 
 ```sh
-export GH_TOKEN=github_pat_...
-curl -fsSL https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.sh | sh -s -- [ssh-alias]
+python3 -m pip install --user git+https://github.com/kshitizwagle/remote-code-bridge
+remote-code-bridge install devbox
 ```
 
-The installer retries the download with `GH_TOKEN` only after an anonymous failure. Do not put the token in the install URL or commit it to configuration.
+`pipx install git+https://github.com/kshitizwagle/remote-code-bridge` works too. To pin a version, add `@v2.0.0` to the URL.
+</details>
 
-PowerShell uses the equivalent process-local variable:
+### What installation sets up
 
-```powershell
-$env:GH_TOKEN = 'github_pat_...'
-irm https://github.com/kshitizwagle/remote-code-bridge/releases/latest/download/install.ps1 | iex
+| Where | What |
+|---|---|
+| Remote | `~/.local/bin/remote-code-bridge` (a single-file copy of the program), a `~/.local/bin/code` link to it, `~/.config/remote-code-bridge/` (settings and the install record), a socket directory (`~/.cache/remote-code-bridge/`, or under `$XDG_RUNTIME_DIR` or `/tmp`), and a `~/.local/bin` PATH line in your shell startup file. It refuses to replace a `code` command that isn't its own. |
+| Your machine | `~/.config/remote-code-bridge/` (settings and the install record), a log directory, and, if you chose it, the login service. The `remote-code-bridge` command itself belongs to uv or pip. |
+| Both | A random 64-character token shared by the two sides. It travels to the remote over SSH standard input, never on a command line. |
+
+Re-running `remote-code-bridge install` is always safe: it keeps your token, settings, and service choice.
+
+## Everyday commands
+
+```sh
+remote-code-bridge status        # either machine: is the bridge running, is the tunnel up?
+remote-code-bridge serve         # run the bridge yourself (if you didn't choose the service)
+remote-code-bridge update        # upgrade the package, update the remote, restart the service
+remote-code-bridge uninstall     # remove everything it installed, here and on the remote
 ```
+
+`update` upgrades with whatever installed it (uv or pip), then re-runs `install` for the saved alias. On Windows it finishes in a new window, because a running program can't replace its own files there.
+
+`uninstall` lists what it will remove and asks before doing it (`--yes` skips the question). It removes the service, then the remote side over SSH, then your machine's side. If the remote can't be reached it stops and changes nothing; `--host-only` cleans just your machine (then run `~/.local/bin/remote-code-bridge uninstall` on the remote yourself). The program itself is uv's or pip's to remove, and the last step tells you how:
+
+```sh
+uv tool uninstall remote-code-bridge
+```
+
+**Coming from version 1:** install with `uv tool install --force git+https://github.com/kshitizwagle/remote-code-bridge` (`--force` replaces the old `remote-code-bridge` command), then run `remote-code-bridge install`. It keeps your token and removes version 1's `RemoteForward` include from `~/.ssh/config`.
+
+## Troubleshooting
+
+| You see | Do this |
+|---|---|
+| `no tunnel from your host` on the remote | Run `remote-code-bridge status` on your machine. It must be awake and logged in, and the bridge must be running (the service, or `remote-code-bridge serve`). |
+| `tunnel: auth_failed` | The bridge can't log in without a prompt: `ssh-add` your key (Windows: start the OpenSSH Authentication Agent service), then check `ssh -o BatchMode=yes devbox true`. |
+| `tunnel: backoff` with a forwarding error | The remote sshd must allow forwarding to Unix sockets (`AllowStreamLocalForwarding yes`, the default; no `DisableForwarding`). |
+| `token: rejected` | Run `remote-code-bridge install` again from your machine. |
+| `remote-code-bridge: command not found` after `uv tool install` | Run `uv tool update-shell` and open a new terminal. |
+
+Logs: `~/.local/state/remote-code-bridge/bridge.log` (Linux), `~/Library/Logs/remote-code-bridge.log` (macOS), `%LOCALAPPDATA%\remote-code-bridge\bridge.log` (Windows).
 
 ## How it works
 
-1. The SSH connection supplies a reverse tunnel from remote `127.0.0.1:39731` to the host bridge on the same address.
-2. The remote `code` client resolves one local path and sends an authenticated `POST /open` request through that tunnel.
-3. The host validates the token, SSH alias, path, and supported VS Code flags, then invokes the local VS Code CLI without a shell.
+1. The bridge listens on `127.0.0.1:39731` on your machine and keeps one SSH connection to the remote: `ssh -N -R ~/.cache/remote-code-bridge/bridge.sock:127.0.0.1:39731 devbox`. That puts a Unix socket on the remote, in a directory only you can open, that leads back to the bridge.
+2. `code .` on the remote resolves the path and sends an authenticated `POST /open` through that socket.
+3. The bridge checks the token, alias, path, and flags, then starts `code --remote ssh-remote+devbox /path` without a shell.
 
-The host bridge offers an unauthenticated `GET /healthz` endpoint and an authenticated `POST /open` endpoint. See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md) for the protocol and limits.
+See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md) for details.
 
 ## Development
 
-Build locally with Rust:
-
 ```sh
-cargo build --release
+uv run --with pytest --with pytest-cov python -m pytest   # unit and integration tests (fake ssh, no network)
+uvx ruff check . && uvx ruff format --check .
+./scripts/smoke-test.sh                       # the single-file copy sent to remotes: serve + code
+./scripts/native-linux-install-update-test.sh # Docker, real sshd: install, sessions, update, uninstall
+uv tool install --force .                     # try your working copy as the real command
 ```
 
-When running the binaries directly without the installer, `REMOTE_CODE_BRIDGE_TOKEN` is required. It is the shared authentication secret between the host bridge and the remote client, so use the same valid 64-character hexadecimal value in both processes. The installer generates and configures this value automatically; do not set a different shell value for an installer-managed setup because environment variables take precedence over the saved config.
-
-Run the host service with generated or environment-based configuration:
+Run the pieces by hand without installing (`REMOTE_CODE_BRIDGE_TUNNEL=0` skips the SSH tunnel; the client then uses TCP `127.0.0.1:PORT`):
 
 ```sh
-export REMOTE_CODE_BRIDGE_TOKEN="$(target/release/remote-code-bridge generate-token)"
-REMOTE_CODE_BRIDGE_TOKEN="$REMOTE_CODE_BRIDGE_TOKEN" \
-REMOTE_CODE_BRIDGE_DRY_RUN=1 \
-target/release/remote-code-bridge serve
+export REMOTE_CODE_BRIDGE_TOKEN="$(python3 -m remote_code_bridge generate-token)"
+REMOTE_CODE_BRIDGE_DRY_RUN=1 REMOTE_CODE_BRIDGE_TUNNEL=0 REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox \
+  python3 -m remote_code_bridge serve
+# another terminal, same token:
+REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox python3 -m remote_code_bridge open .
 ```
 
-In another terminal, set the same generated token, then invoke the client:
+Configuration lives in `~/.config/remote-code-bridge/host.env` and `remote.env`; non-empty `REMOTE_CODE_BRIDGE_*` environment variables override them. Don't set a different `REMOTE_CODE_BRIDGE_TOKEN` in your shell for an installed setup; it would override the saved one.
 
-```sh
-REMOTE_CODE_BRIDGE_TOKEN="$REMOTE_CODE_BRIDGE_TOKEN" \
-REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox \
-target/release/remote-code-bridge open .
-```
-
-Configuration files are read from `~/.config/remote-code-bridge/host.env` and `remote.env`; non-empty `REMOTE_CODE_BRIDGE_*` environment variables take precedence. `remote-code-bridge generate-token` prints a new token for development or recovery.
-
-Run the project checks with:
-
-```sh
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
-./scripts/smoke-test.sh
-```
-
-Pull requests and pushes run those Rust and installer checks, including an 80% line-coverage gate. Once that smoke workflow passes for a push to `master`, it triggers a build of the five platform binaries and their SHA-256 files, so `master` always has a ready set of artifacts from a commit that already passed every check. Publishing a release, pushing a `v*`/numeric version tag, or choosing **Actions -> release -> Run workflow** does not rebuild: it waits for that commit's already-verified build, then republishes the same binaries alongside version-pinned `install.sh`/`install.ps1` installers. It fails with a clear error if the target commit does not produce a successful build. The manual workflow asks for a release number and targets the tip of `master`; the `v` prefix is optional. Workflow actions use readable major-version references.
-
-The Linux and macOS assets are native executables and intentionally have no filename extension; the Windows asset is the `.exe` build.
+Releases: bump `__version__` in `remote_code_bridge/__init__.py`, then push a `v*` tag (or use **Actions → release → Run workflow**). The workflow tests that commit, checks the version matches the tag, and attaches the wheel and sdist to a GitHub release. Users on `uv tool install git+…` get it with `remote-code-bridge update`.
 
 ## License
 
