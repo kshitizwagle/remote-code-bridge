@@ -164,10 +164,14 @@ def _check_windows_acl(path: Path) -> None:
     acl = json.loads(result.stdout)
     trusted = (acl["me"], *WINDOWS_TRUSTED_SIDS)
     if acl["owner"] not in trusted:
-        raise BridgeError(f"refusing SSH config {path}: it is not owned by you")
+        raise BridgeError(f"refusing SSH config {path}: it is not owned by you (owner {acl['owner']})")
     writers = acl["writers"] if isinstance(acl["writers"], list) else [acl["writers"]]
-    if any(writer not in trusted for writer in writers if writer):
-        raise BridgeError(f"refusing SSH config {path}: it is writable by other users")
+    others = sorted({writer for writer in writers if writer and writer not in trusted})
+    if others:
+        raise BridgeError(
+            f"refusing SSH config {path}: it is writable by other users ({', '.join(others)}); "
+            f'fix with: icacls "{path}" /inheritance:r /grant:r "%USERNAME%:F"'
+        )
 
 
 def identity(alias: str) -> tuple[str, str, str] | None:

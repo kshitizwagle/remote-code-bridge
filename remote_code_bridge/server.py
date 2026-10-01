@@ -57,6 +57,13 @@ class BridgeServer(socketserver.ThreadingTCPServer):
 
     def _busy(self, request: socket.socket) -> None:
         _send(request, Response.error(503, "server busy"), timeout=1.0)
+        # Read what the client sent first: closing a socket with unread data makes Windows reset
+        # the connection, and the client would never see the 503.
+        try:
+            request.settimeout(0.2)
+            request.recv(65536)
+        except OSError:
+            pass
         self.shutdown_request(request)
 
 

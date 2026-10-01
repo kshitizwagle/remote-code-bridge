@@ -76,7 +76,8 @@ jobs:
           remote-code-bridge generate-token
           remote-code-bridge uninstall --yes
           uv tool uninstall remote-code-bridge
-          ! command -v remote-code-bridge
+          hash -r  # forget bash's cached location of the removed command
+          if command -v remote-code-bridge; then echo "still installed" >&2; exit 1; fi
 
   native-linux:
     runs-on: ubuntu-24.04

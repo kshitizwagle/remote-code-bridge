@@ -136,12 +136,21 @@ def test_request_deadline_rejects_slow_drip():
 )
 def test_malformed_requests(raw, message):
     a, b = socket.socketpair()
-    a.sendall(raw)
-    a.shutdown(socket.SHUT_WR)
+
+    def write():  # from a thread: a 20 KB request doesn't fit in macOS socket buffers
+        try:
+            a.sendall(raw)
+            a.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass  # the reader may give up (and close) before everything is written
+
+    writer = threading.Thread(target=write)
+    writer.start()
     with pytest.raises(HttpError, match=message):
         read_request(b, timeout=2)
-    a.close()
     b.close()
+    writer.join(timeout=5)
+    a.close()
 
 
 def test_bad_request_gets_400_over_the_wire(server):
