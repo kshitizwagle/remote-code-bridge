@@ -1,10 +1,7 @@
-import hashlib
-import http.server
 import os
 import socket
 import subprocess
 import sys
-import threading
 import time
 
 import pytest
@@ -76,16 +73,19 @@ def test_full_stack_through_the_archive(archive, tmp_path, home):
 # -- update ---------------------------------------------------------------------------------------
 
 
+class StopRecorder:
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
 @pytest.fixture
-def release(tmp_path, archive):
-    directory = tmp_path / "release"
-    directory.mkdir()
-    data = archive.read_bytes()
-    (directory / "remote-code-bridge.pyz").write_bytes(data)
-    (directory / "remote-code-bridge.pyz.sha256").write_text(
-        f"{hashlib.sha256(data).hexdigest()}  remote-code-bridge.pyz\n"
-    )
-    return directory
+def saved_alias(home):
+    config = home / ".config" / "remote-code-bridge"
+    config.mkdir(parents=True)
+    (config / "host.env").write_text("REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox\n")
 
 
 @pytest.fixture
@@ -97,78 +97,63 @@ def ran(monkeypatch):
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(update.subprocess, "run", fake_run)
+    monkeypatch.setattr(update.sys, "platform", "linux")
     return calls
 
 
-def test_update_runs_the_new_installer_for_the_saved_alias(home, release, ran, monkeypatch, capsys):
-    config = home / ".config" / "remote-code-bridge"
-    config.mkdir(parents=True)
-    (config / "host.env").write_text("REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox\n")
-    monkeypatch.setenv("RCB_RELEASE_URL", release.as_uri() + "/")
+def test_update_with_uv_upgrades_then_reinstalls(saved_alias, ran, monkeypatch, capsys):
+    monkeypatch.setattr(update, "installed_with_uv", lambda: True)
+    monkeypatch.setattr(update.shutil, "which", lambda name: f"/bin/{name}")
     monkeypatch.setenv("GH_TOKEN", "ghp_secret")
-    assert update.update() == 0
-    argv, env = ran[0]
-    assert argv[0] == sys.executable and argv[1].endswith("remote-code-bridge.pyz")
-    assert argv[2:] == ["install", "devbox", "--yes"]
+    services = StopRecorder()
+    assert update.update(services=services) == 0
+    assert services.stopped  # the service runs from the environment being replaced
+    (upgrade, env), (reinstall, _) = ran
+    assert upgrade == ["/bin/uv", "tool", "install", "--force", "--reinstall", update.PACKAGE]
+    assert reinstall == ["/bin/remote-code-bridge", "install", "devbox", "--yes"]
     assert "GH_TOKEN" not in env
     assert "updated for SSH alias devbox" in capsys.readouterr().out
 
 
-def test_update_rejects_a_bad_checksum(home, release, ran, monkeypatch):
-    (release / "remote-code-bridge.pyz.sha256").write_text("0" * 64 + "\n")
-    monkeypatch.setenv("RCB_RELEASE_URL", release.as_uri())
-    with pytest.raises(BridgeError, match="checksum failed"):
-        update.update("devbox")
-    assert ran == []
+def test_update_with_pip_and_a_custom_source(saved_alias, ran, monkeypatch):
+    monkeypatch.setattr(update, "installed_with_uv", lambda: False)
+    monkeypatch.setenv("RCB_PACKAGE_SPEC", "/src/my-fork")
+    update.update("lab", services=StopRecorder())
+    assert ran[0][0] == [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", "--no-deps",
+                         "/src/my-fork"]  # fmt: skip
+    assert ran[1][0][1:] == ["install", "lab", "--yes"]
 
 
-def test_update_needs_a_valid_alias(home, ran):
+def test_update_reports_a_failed_upgrade(saved_alias, monkeypatch):
+    monkeypatch.setattr(update, "installed_with_uv", lambda: False)
+    monkeypatch.setattr(update.sys, "platform", "linux")
+    monkeypatch.setattr(update.subprocess, "run", lambda argv, env: subprocess.CompletedProcess(argv, 1))
+    with pytest.raises(BridgeError, match="upgrading the package failed"):
+        update.update(services=StopRecorder())
+
+
+def test_update_needs_uv_when_installed_with_uv(saved_alias, monkeypatch):
+    monkeypatch.setattr(update, "installed_with_uv", lambda: True)
+    monkeypatch.setattr(update.shutil, "which", lambda name: None)
+    with pytest.raises(BridgeError, match="`uv` is not on PATH"):
+        update.update(services=StopRecorder())
+
+
+def test_update_needs_a_valid_alias(home):
     with pytest.raises(BridgeError, match="could not determine SSH alias"):
-        update.update()
+        update.update(services=StopRecorder())
     with pytest.raises(BridgeError, match="unsupported characters"):
-        update.update("-oProxyCommand=x")
+        update.update("-oProxyCommand=x", services=StopRecorder())
 
 
-class RateLimited(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
-        if self.path == "/missing":
-            self.send_response(404)
-        elif self.headers.get("Authorization") == "Bearer ghp_ok":
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"ok")
-            return
-        else:
-            self.send_response(403)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def log_message(self, *args):
-        pass
-
-
-@pytest.fixture
-def github():
-    server = http.server.HTTPServer(("127.0.0.1", 0), RateLimited)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    server.shutdown()
-
-
-def test_download_retries_with_gh_token_after_rate_limit(github, monkeypatch):
-    monkeypatch.setenv("GH_TOKEN", "ghp_ok")
-    assert update.download(f"{github}/file") == b"ok"
-
-
-def test_download_errors(github, monkeypatch):
-    monkeypatch.delenv("GH_TOKEN", raising=False)
-    with pytest.raises(BridgeError, match="HTTP 403. If GitHub rate-limited you, export GH_TOKEN"):
-        update.download(f"{github}/file")
-    with pytest.raises(BridgeError, match="HTTP 404"):
-        update.download(f"{github}/missing")
-    monkeypatch.setenv("GH_TOKEN", "ghp_wrong")
-    with pytest.raises(BridgeError, match="even with GH_TOKEN"):
-        update.download(f"{github}/file")
-    with pytest.raises(BridgeError, match="download failed"):
-        update.download("http://127.0.0.1:1/nothing")
+def test_windows_update_continues_after_this_process_exits(saved_alias, monkeypatch):
+    """Windows can't replace the running python.exe, so a helper script does the work afterwards."""
+    started = []
+    monkeypatch.setattr(update, "installed_with_uv", lambda: False)
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.setattr(update.subprocess, "Popen", lambda argv, **kwargs: started.append(argv))
+    assert update.update(services=StopRecorder()) == 0
+    script = started[0][-1]
+    text = open(script).read()
+    assert "pip install --upgrade" in text and "remote-code-bridge install devbox --yes" in text
+    assert text.index("ping") < text.index("pip install")  # waits for this process to exit first

@@ -19,13 +19,19 @@ This project lets a remote SSH session ask your machine to open VS Code on an SS
 
 Treat the token like a password. Don't commit either config file or paste it into issues. To rotate it, delete `REMOTE_CODE_BRIDGE_TOKEN` from `host.env` and re-run the installer.
 
-## Downloads
+## Installation source
 
-The convenience install commands use the mutable `latest` release, and `irm … | iex` runs the downloaded script directly. For a reproducible check, download a versioned `install.sh` or `install.ps1` and its `.sha256`, verify it, then run it. The bootstraps and `remote-code-bridge update` verify `remote-code-bridge.pyz` against its `.sha256` before running it. `GH_TOKEN` is used only to retry a download after GitHub answers 403/429, and is passed to `curl` on standard input.
+The package is installed from this GitHub repository over HTTPS (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`). To pin a reviewed version, install a tag: `…/remote-code-bridge@v2.0.0`. It has no third-party dependencies. The remote never downloads anything: it receives its copy of the program from your machine over SSH standard input.
+
+`remote-code-bridge update` installs the latest commit of the default branch (or `RCB_PACKAGE_SPEC` if set) with the same tool that installed it.
+
+## Uninstall
+
+Each machine records what installation created (`~/.config/remote-code-bridge/manifest.json`), and `remote-code-bridge uninstall` removes exactly that, including the token files on both machines. It never deletes a directory it didn't create or a file it doesn't own; in shell startup files it removes only its own marked block.
 
 ## SSH
 
-- **The host service connects to the remote with your own SSH configuration and credentials**, without a prompt (`BatchMode=yes`), and keeps that one connection open while you're logged in.
+- **The bridge connects to the remote with your own SSH configuration and credentials**, without a prompt (`BatchMode=yes`), and keeps that one connection open while it runs (as the login service, or while you run `remote-code-bridge serve`).
 - **What the remote sshd must allow:** forwarding to Unix sockets (`AllowStreamLocalForwarding yes`, the default, and no `DisableForwarding`).
 - **Your `~/.ssh/config` is not modified.**
 - **Helper connections can't be redirected.** Installer probes and the tunnel's preparation step use `ClearAllForwardings=yes` and `ControlPath=none`, so they never request forwards or share a connection with your sessions.

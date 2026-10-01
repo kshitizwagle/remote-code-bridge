@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import secrets
 
-__version__ = "2.0.0.dev0"
+__version__ = "2.0.0"
 
 APP_NAME = "remote-code-bridge"
 DEFAULT_PORT = 39731

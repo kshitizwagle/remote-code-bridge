@@ -16,19 +16,33 @@ from conftest import TOKEN
 from remote_code_bridge import BridgeError
 from remote_code_bridge.config import read_values
 from remote_code_bridge.install import install
+from remote_code_bridge.uninstall import uninstall
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fake remote needs a POSIX shell")
 
 
 class FakeServices:
-    def __init__(self):
+    """Behaves like ServiceManager on Linux, minus systemctl: writes and deletes the unit file."""
+
+    def __init__(self, home):
         self.events = []
+        self.unit = home / ".config" / "systemd" / "user" / "remote-code-bridge.service"
+
+    def files(self):
+        return [self.unit]
 
     def stop(self):
         self.events.append("stop")
 
-    def install(self, python, archive):
-        self.events.append(("install", python, Path(archive)))
+    def install(self, python):
+        self.events.append(("install", python))
+        self.unit.parent.mkdir(parents=True, exist_ok=True)
+        self.unit.write_text(f"ExecStart={python} -m remote_code_bridge serve\n")
+
+    def remove(self):
+        self.events.append("remove")
+        if self.unit.exists():
+            self.unit.unlink()
 
 
 @pytest.fixture
@@ -36,6 +50,7 @@ def world(home, fake_ssh, tmp_path, monkeypatch):
     """A host (HOME) with VS Code, an ssh config, and a reachable Linux remote with python3."""
     # Short remote HOME so the Unix socket path stays under the ~100 byte limit.
     remote = Path(tempfile.mkdtemp(prefix="rcb", dir="/tmp"))
+    (remote / ".bashrc").write_text("# the remote user's own settings\nalias ll='ls -l'\n")
     fakebin = tmp_path / "fakebin"
     fakebin.mkdir()
     (fakebin / "uname").write_text('#!/bin/sh\ncase "$1" in -s) echo "${FAKE_UNAME:-Linux}";; *) echo x86_64;; esac\n')
@@ -62,19 +77,14 @@ def world(home, fake_ssh, tmp_path, monkeypatch):
         pass
 
     world = World()
-    world.home, world.remote, world.fakebin, world.calls, world.services = (
-        home,
-        remote,
-        fakebin,
-        fake_ssh,
-        FakeServices(),
-    )
+    world.home, world.remote, world.fakebin, world.calls = home, remote, fakebin, fake_ssh
+    world.services = FakeServices(home)
     yield world
     shutil.rmtree(remote, ignore_errors=True)
 
 
-def run_install(world, alias="devbox", **kwargs):
-    install(alias, assume_yes=True, services=world.services, verify=False, **kwargs)
+def run_install(world, alias="devbox", service=False, **kwargs):
+    install(alias, assume_yes=True, service=service, services=world.services, verify=False, **kwargs)
     return read_values(world.home / ".config" / "remote-code-bridge" / "host.env")
 
 
@@ -95,11 +105,21 @@ def test_fresh_install_writes_both_sides(world):
     assert os.readlink(remote_bin / "code") == "remote-code-bridge"
     assert os.access(remote_bin / "remote-code-bridge", os.X_OK)
     assert "remote-code-bridge PATH" in (world.remote / ".bashrc").read_text()
-    assert "remote-code-bridge PATH" in (world.home / ".zshrc").read_text()
-    launcher = (world.home / ".local" / "bin" / "remote-code-bridge").read_text()
-    assert sys.executable in launcher and "remote-code-bridge.pyz" in launcher
-    assert world.services.events[0] == "stop" and world.services.events[1][0] == "install"
-    assert not list(remote_bin.glob(".remote-code-bridge.*")), "temporary archive left behind"
+    # The host command comes from uv/pip, so nothing is added to the host's PATH or ~/.local/bin.
+    assert not (world.home / ".zshrc").exists() and not (world.home / ".local" / "bin").exists()
+    assert world.services.events == ["stop"]  # no login service unless asked for
+    assert not list(remote_bin.glob(".remote-code-bridge*")), "temporary archive left behind"
+
+
+def test_service_is_optional_and_remembered(world):
+    run_install(world, service=True)
+    assert world.services.events[-1] == ("install", sys.executable)
+    assert world.services.unit.exists()
+    world.services.events.clear()
+    install("devbox", assume_yes=True, services=world.services, verify=False)  # no flag: keep the choice
+    assert world.services.events[-1][0] == "install"
+    run_install(world, service=False)  # switching it off removes it
+    assert world.services.events[-1] == "remove" and not world.services.unit.exists()
 
 
 def test_token_is_never_on_a_command_line(world):
@@ -177,13 +197,16 @@ def test_v1_ssh_forward_is_removed(world):
     assert not managed.exists()
 
 
-def test_symlinked_rc_files_are_followed(world, tmp_path):
-    dotfiles = tmp_path / "dotfiles-zshrc"
+def test_symlinked_remote_rc_file_is_followed_and_restored(world, tmp_path):
+    dotfiles = world.remote / "dotfiles-bashrc"
     dotfiles.write_text("alias ll='ls -l'\n")
-    (world.home / ".zshrc").symlink_to(dotfiles)
+    (world.remote / ".bashrc").unlink()
+    (world.remote / ".bashrc").symlink_to(dotfiles)
     run_install(world)
-    assert (world.home / ".zshrc").is_symlink()
+    assert (world.remote / ".bashrc").is_symlink()
     assert "remote-code-bridge PATH" in dotfiles.read_text()
+    uninstall(assume_yes=True, services=world.services)
+    assert dotfiles.read_text() == "alias ll='ls -l'\n" and (world.remote / ".bashrc").is_symlink()
 
 
 @pytest.mark.parametrize(
@@ -220,3 +243,74 @@ def test_bad_alias_and_empty_config(world):
     (world.home / ".ssh" / "config").write_text("")
     with pytest.raises(BridgeError, match="no concrete SSH Host aliases"):
         run_install(world, alias=None)
+
+
+# -- uninstall: no trace on either machine ------------------------------------------------------
+
+
+def snapshot(root):
+    """Every path under `root` with its content (or link target): the exact state of a home directory."""
+    state = {}
+    for directory, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            path = Path(directory) / name
+            relative = str(path.relative_to(root))
+            if path.is_symlink():
+                state[relative] = ("link", os.readlink(path))
+            elif path.is_dir():
+                state[relative] = ("dir", None)
+            else:
+                state[relative] = ("file", path.read_bytes())
+    return state
+
+
+@pytest.mark.parametrize("service", [False, True], ids=["no-service", "service"])
+def test_uninstall_leaves_no_trace_on_either_machine(world, service):
+    host_before, remote_before = snapshot(world.home), snapshot(world.remote)
+    run_install(world, service=service)
+    run_install(world)  # a reinstall/update in between must not lose track of anything
+    assert snapshot(world.remote) != remote_before
+
+    uninstall(assume_yes=True, services=world.services)
+
+    assert snapshot(world.home) == host_before
+    assert snapshot(world.remote) == remote_before
+    assert ("remove" in world.services.events) is service
+
+
+def test_uninstall_keeps_directories_and_files_that_were_already_there(world):
+    """~/.local/bin and an existing ~/.profile are not ours: only our lines and files go."""
+    (world.remote / ".local" / "bin").mkdir(parents=True)
+    (world.remote / ".local" / "bin" / "my-tool").write_text("#!/bin/sh\n")
+    remote_before = snapshot(world.remote)
+    run_install(world)
+    uninstall(assume_yes=True, services=world.services)
+    assert snapshot(world.remote) == remote_before
+
+
+@pytest.mark.parametrize("service", [False, True], ids=["no-service", "service"])
+def test_unreachable_remote_changes_nothing_unless_host_only(world, monkeypatch, service):
+    host_before = snapshot(world.home)
+    run_install(world, service=service)
+    installed = snapshot(world.home)
+    world.services.events.clear()
+    monkeypatch.setenv("FAKE_SSH_UNREACHABLE", "devbox")
+    with pytest.raises(BridgeError, match="could not uninstall on devbox"):
+        uninstall(assume_yes=True, services=world.services)
+    assert snapshot(world.home) == installed  # untouched, and the service is running again
+    if service:
+        assert world.services.events == ["stop", ("install", sys.executable)]
+    uninstall(assume_yes=True, host_only=True, services=world.services)
+    assert snapshot(world.home) == host_before
+
+
+def test_uninstall_refuses_while_serve_is_running(world, monkeypatch):
+    run_install(world)
+    monkeypatch.setattr("remote_code_bridge.uninstall.bridge_is_running", lambda: True)
+    with pytest.raises(BridgeError, match="stop `remote-code-bridge serve` first"):
+        uninstall(assume_yes=True, services=world.services)
+
+
+def test_uninstall_without_install_is_a_no_op(world, capsys):
+    uninstall(assume_yes=True, services=world.services)
+    assert "nothing to uninstall" in capsys.readouterr().out

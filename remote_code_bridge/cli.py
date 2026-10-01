@@ -17,9 +17,11 @@ from remote_code_bridge.config import (
 
 USAGE = """usage: remote-code-bridge <command>
 
-  on the remote:  open [flags] [path]    (also runs as `code`)
-  on the host:    serve | install [ssh-alias] [--yes] | update [ssh-alias]
-  either side:    status | generate-token | --version"""
+  on the host:    install [ssh-alias] [--service | --no-service] [--yes]
+                  serve                      run the bridge (if you didn't choose the login service)
+                  update [ssh-alias]         upgrade the package and the remote
+  on the remote:  open [flags] [path]        (also runs as `code`)
+  either side:    status | uninstall [--yes] [--host-only] | generate-token | --version"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,11 +60,21 @@ def run(command: str, rest: list[str]) -> int:
     if command == "install":
         flags = [arg for arg in rest if arg.startswith("-")]
         aliases = [arg for arg in rest if not arg.startswith("-")]
-        if set(flags) - {"--yes", "-y"} or len(aliases) > 1:
-            raise BridgeError("usage: remote-code-bridge install [ssh-alias] [--yes]")
+        if set(flags) - {"--yes", "-y", "--service", "--no-service"} or len(aliases) > 1:
+            raise BridgeError("usage: remote-code-bridge install [ssh-alias] [--service | --no-service] [--yes]")
+        if {"--service", "--no-service"} <= set(flags):
+            raise BridgeError("choose either --service or --no-service")
+        service = True if "--service" in flags else False if "--no-service" in flags else None
         from remote_code_bridge.install import install
 
-        install(aliases[0] if aliases else None, assume_yes=bool(flags))
+        install(aliases[0] if aliases else None, assume_yes=bool({"--yes", "-y"} & set(flags)), service=service)
+        return 0
+    if command == "uninstall":
+        if set(rest) - {"--yes", "-y", "--host-only"}:
+            raise BridgeError("usage: remote-code-bridge uninstall [--yes] [--host-only]")
+        from remote_code_bridge.uninstall import uninstall
+
+        uninstall(assume_yes=bool({"--yes", "-y"} & set(rest)), host_only="--host-only" in rest)
         return 0
     if command == "update":
         if len(rest) > 1:

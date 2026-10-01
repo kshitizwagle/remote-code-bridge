@@ -1,10 +1,10 @@
 # Architecture
 
-`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+) shipped as a single zipapp, `remote-code-bridge.pyz`. The same file runs on both machines:
+`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+). On your machine it is installed like any Python tool (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`, or pip), which provides the `remote-code-bridge` command. The remote gets a single-file copy of the same package (a zipapp built by `bundle.py` at install time), so it only needs `python3`.
 
-- `remote-code-bridge serve` is the host service.
+- `remote-code-bridge serve` is the bridge on your machine, run by the login service or by hand.
 - `remote-code-bridge open [code arguments]` is the remote client; invoked through a link named `code`, it selects `open` automatically.
-- `install`, `update`, `status`, and `generate-token` are the tools around them.
+- `install`, `update`, `uninstall`, `status`, and `generate-token` are the tools around them.
 
 ## Request flow
 
@@ -82,18 +82,32 @@ Content-Type: application/json
 | `REMOTE_CODE_BRIDGE_TOKEN` | 64 hex characters |
 | `REMOTE_CODE_BRIDGE_SOCKET` | the tunnel socket; without it the client uses TCP `127.0.0.1:PORT` |
 
-## Installer
+## Install, update, uninstall
 
-`install.sh` and `install.ps1` are small bootstraps: find Python 3.8+, download `remote-code-bridge.pyz` and its `.sha256` (retrying with `GH_TOKEN` only after a 403/429), verify, and run `python remote-code-bridge.pyz install [alias]`. Everything else is in `install.py`, the same code on every host OS:
+`install.py` is the same code on every host OS:
 
-1. **Find the remote.** `sshconfig.py` parses `~/.ssh/config` and its `Include`s. Relative paths resolve against `~/.ssh`, as OpenSSH does. Each file must be yours and not writable by others (on Windows, compared by SID: you, SYSTEM, Administrators). Files with `Match exec` are refused because `ssh -G` would run it. Candidates are probed in parallel with `BatchMode=yes`; aliases with the same `ssh -G` hostname, user, and port count as one machine.
-2. **Check the remote.** Linux, Python 3.8+, and SSH login without a prompt.
-3. **Install on the remote.** A short bootstrap, sent base64-encoded so no login shell can mangle it, reads a JSON payload from stdin: the archive, the token, and the shell rc file. It then imports `remote_setup` from the archive it just saved. That module chooses the socket, installs `~/.local/bin/remote-code-bridge` plus the `code` link, writes `remote.env`, adds the PATH block, and prints the socket path.
-4. **Install on the host.** The archive, a launcher, `host.env` (keeping unknown keys and comments), and the PATH entry (an rc block on POSIX, the user `Path` registry value on Windows).
-5. **Clean up v1.** Remove the `# >>> remote-code-bridge include >>>` block from `~/.ssh/config`, `~/.ssh/remote-code-bridge/`, and Windows' `remote-code-bridge.exe`.
-6. **Start the service and verify.** `service.py` writes a systemd unit, a launchd plist, or a Scheduled Task. The task has no time limit and runs on battery; Windows defaults would stop it after 72 hours or when unplugged. The installer then waits for `tunnel: up` and runs `remote-code-bridge status` on the remote.
+1. **Find the remote.** `sshconfig.py` parses `~/.ssh/config` and its `Include`s (relative paths resolve against `~/.ssh`, as OpenSSH does). Each file must be yours and not writable by others (on Windows, compared by SID: you, SYSTEM, Administrators); files with `Match exec` are refused because `ssh -G` would run it. Candidates are probed in parallel with `BatchMode=yes`; aliases with the same `ssh -G` hostname, user, and port count as one machine.
+2. **Check the remote:** Linux, Python 3.8+, and SSH login without a prompt.
+3. **Install on the remote.** A short bootstrap, sent base64-encoded so no login shell can mangle it, reads a JSON payload from stdin: the single-file program, the token, and the shell rc file to use. It saves the program to a temporary file and imports `remote_setup` from it. That module chooses the socket, installs `~/.local/bin/remote-code-bridge` plus the `code` link, writes `remote.env`, adds the PATH block, records all of it in the remote manifest, and prints the socket path.
+4. **Configure this host:** `host.env` (keeping unknown keys and comments), and the login service if you chose it (`--service`, `--no-service`, or a question; a reinstall keeps the earlier choice). `service.py` writes a systemd unit, a launchd plist, or a Scheduled Task that runs `python -m remote_code_bridge serve` with the package's own Python. The task has no time limit and runs on battery (Windows defaults would stop it after 72 hours or when unplugged).
+5. **Clean up version 1:** the `# >>> remote-code-bridge include >>>` block in `~/.ssh/config` and `~/.ssh/remote-code-bridge/`.
+6. **Verify:** wait for `tunnel: up` (with a temporary in-process bridge when there is no service) and run `remote-code-bridge status` on the remote.
 
-`update.py` downloads and verifies the latest archive, then runs its `install <alias> --yes`.
+**The manifest** (`manifest.py`) is what makes uninstall exact. Each machine keeps `~/.config/remote-code-bridge/manifest.json`, written *before* each change:
+
+| Field | Meaning | On uninstall |
+|---|---|---|
+| `files` | files we created (rotated logs included) | deleted |
+| `owned_dirs` | directories that are entirely ours (`~/.config/remote-code-bridge`, the state and socket directories) | deleted with contents |
+| `created_dirs` | parents that didn't exist before we needed them (say `~/.local/bin`) | removed only if empty again |
+| `blocks` | marked blocks added to files we don't own (shell rc files), and whether we created the file | block removed; file deleted only if we created it and it is now empty |
+| `service`, `remote_alias` | the login service, and the remote we installed | service unregistered; remote uninstalled over SSH |
+
+Reinstalls and updates merge into the record, never shrink it, so something created by the first install is still removed after any number of updates.
+
+`uninstall.py` stops the service, runs `~/.local/bin/remote-code-bridge uninstall --yes` on the remote (which undoes the remote manifest, deleting the very file it runs from, which is why everything is imported up front), then removes the service and undoes the host manifest. If the remote can't be reached, the service is restarted and nothing is removed, unless `--host-only` is given. Without a manifest (an install from before manifests existed), it falls back to the locations it knows it creates.
+
+`update.py` stops the service, upgrades the package with whatever installed it (`uv tool install --force --reinstall` when running from a uv tool environment, otherwise pip; `RCB_PACKAGE_SPEC` overrides the source), then runs the new version's `install <alias> --yes`. On Windows a helper script does this after the command exits, because a running `python.exe` can't be replaced.
 
 ## Modules
 
@@ -108,6 +122,6 @@ Content-Type: application/json
 | `client.py` | the remote `code` command |
 | `ssh.py` | every `ssh` invocation (`RCB_SSH` substitutes a fake in tests) |
 | `sshconfig.py` | ssh config discovery and safety checks |
-| `install.py`, `remote_setup.py`, `service.py`, `update.py`, `files.py` | installation |
-| `bundle.py` | builds the zipapp |
+| `install.py`, `remote_setup.py`, `service.py`, `update.py`, `uninstall.py`, `manifest.py`, `files.py` | installation and removal |
+| `bundle.py` | builds the single-file copy sent to the remote |
 | `log.py` | rotating log file with token redaction |

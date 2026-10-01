@@ -12,6 +12,7 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,8 +25,6 @@ jobs:
         run: ruff check .
       - name: Check formatting
         run: ruff format --check .
-      - name: Check installer syntax
-        run: sh -n install.sh
 
   test:
     strategy:
@@ -37,6 +36,7 @@ jobs:
           - { os: macos-15, python: '3.13' }
           - { os: windows-2022, python: '3.13' }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,22 +51,41 @@ jobs:
       - name: Test
         if: ${{ !matrix.coverage }}
         run: python -m pytest
-      - name: Parse install.ps1 with Windows PowerShell and PowerShell Core
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          foreach ($shell in 'powershell', 'pwsh') {
-            & $shell -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$e); if ($e) { $e; exit 1 }'
-            if ($LASTEXITCODE) { exit 1 }
-          }
 
-  native-linux:
-    runs-on: ubuntu-24.04
+  # Install the way users do (`uv tool install`), then run, uninstall and remove it.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Smoke test the release archive
+      - uses: astral-sh/setup-uv@v6
+      - name: Build sdist and wheel
+        run: uv build
+      - name: uv tool install, run, uninstall
+        shell: bash
+        run: |
+          uv tool install .
+          export PATH="$(uv tool dir --bin):$PATH"
+          remote-code-bridge --version
+          remote-code-bridge generate-token
+          remote-code-bridge uninstall --yes
+          uv tool uninstall remote-code-bridge
+          ! command -v remote-code-bridge
+
+  native-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Smoke test the single-file copy sent to remotes
         run: ./scripts/smoke-test.sh
-      - name: End-to-end against a real sshd (install, concurrent sessions, recovery, update)
+      - name: End-to-end against a real sshd (install, sessions, recovery, update, uninstall)
         run: ./scripts/native-linux-install-update-test.sh

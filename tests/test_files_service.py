@@ -1,7 +1,6 @@
 import plistlib
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -49,20 +48,22 @@ def test_resolve_symlink_loop(tmp_path):
         resolve_symlinks(tmp_path / "a")
 
 
-def test_unit_files_quote_paths():
-    unit = systemd_unit("/opt/my python/python3", PurePosixPath("/home/u/100%/rcb.pyz"))
-    assert 'ExecStart="/opt/my python/python3" "/home/u/100%%/rcb.pyz" serve' in unit
+def test_unit_files_run_the_installed_package():
+    unit = systemd_unit("/opt/my python/100%/python3")
+    assert 'ExecStart="/opt/my python/100%%/python3" "-m" "remote_code_bridge" "serve"' in unit
     assert "Restart=always" in unit
-    plist = plistlib.loads(launchd_plist("/usr/bin/python3", PurePosixPath("/x.pyz")))
-    assert plist["ProgramArguments"] == ["/usr/bin/python3", "/x.pyz", "serve"] and plist["KeepAlive"] is True
+    plist = plistlib.loads(launchd_plist("/usr/bin/python3"))
+    assert plist["ProgramArguments"] == ["/usr/bin/python3", "-m", "remote_code_bridge", "serve"]
+    assert plist["KeepAlive"] is True
 
 
 def test_windows_task_never_times_out_and_runs_on_battery():
     """B8 and B17: Scheduled Task defaults stop the bridge after 72h or when the laptop is unplugged."""
-    xml = windows_task_xml(r"C:\Python\pythonw.exe", Path(r"C:\Users\me\rcb.pyz"), "PC\\me & co")
+    xml = windows_task_xml(r"C:\Python\pythonw.exe", "PC\\me & co")
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in xml
     assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in xml
     assert "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" in xml
+    assert "<Arguments>-m remote_code_bridge serve</Arguments>" in xml
     assert "PC\\me &amp; co" in xml
 
 
@@ -77,25 +78,29 @@ class Recorder:
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
-def test_service_install_and_stop(home, platform):
+def test_service_install_remove_and_stop(home, platform):
     if platform == "darwin" and sys.platform == "win32":
         pytest.skip("launchd domains use os.getuid(), which Windows lacks")
     run = Recorder()
     manager = ServiceManager(platform=platform, run=run, home=home)
     manager.stop()
-    manager.install("/usr/bin/python3", home / "rcb.pyz")
-    commands = [argv[0] for argv in run.calls]
+    manager.install("/usr/bin/python3")
     expected = {"linux": "systemctl", "darwin": "launchctl", "win32": "schtasks"}[platform]
-    assert expected in commands
+    assert expected in [argv[0] for argv in run.calls]
+    unit = manager.unit_path()
+    if unit is not None:
+        assert unit.exists() and unit in manager.files()
+    manager.remove()
+    assert not any(path.exists() for path in manager.files())
+    if platform == "win32":
+        assert ["schtasks", "/Delete", "/TN", "remote-code-bridge", "/F"] in run.calls
     if platform == "linux":
-        assert (home / ".config/systemd/user/remote-code-bridge.service").exists()
-    if platform == "darwin":
-        assert (home / "Library/LaunchAgents/com.remote-code-bridge.plist").exists()
+        assert ["systemctl", "--user", "disable", "--now", "remote-code-bridge.service"] in run.calls
 
 
 def test_service_failures_are_reported(home):
     manager = ServiceManager(platform="linux", run=Recorder(fail=("daemon-reload",)), home=home)
     with pytest.raises(BridgeError, match="daemon-reload"):
-        manager.install("/usr/bin/python3", home / "rcb.pyz")
+        manager.install("/usr/bin/python3")
     with pytest.raises(BridgeError, match="unsupported"):
-        ServiceManager(platform="plan9", run=Recorder(), home=home).install("p", home / "x")
+        ServiceManager(platform="plan9", run=Recorder(), home=home).install("p")

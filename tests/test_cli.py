@@ -46,6 +46,8 @@ def test_errors_exit_2_with_prefix(home, capsys):
         (["generate-token", "extra"], "does not accept arguments"),
         (["install", "a", "b"], "usage: remote-code-bridge install"),
         (["install", "--force"], "usage: remote-code-bridge install"),
+        (["install", "--service", "--no-service"], "either --service or --no-service"),
+        (["uninstall", "--everything"], "usage: remote-code-bridge uninstall"),
         (["update", "a", "b"], "usage: remote-code-bridge update"),
     ],
 )

@@ -11,6 +11,9 @@ RUN apt-get update \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# uv, to install remote-code-bridge on the host the way users do.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 ARG RCB_UID=1000
 # ubuntu:24.04 ships an `ubuntu` user with UID 1000; free the UID for the test user.
 RUN if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi \

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Runs inside the `host` container (see compose.yml) against a real sshd in the `remote` container.
-# Covers: bootstrap install, v1 migration, many concurrent sessions, tunnel recovery, update.
+# Covers the whole life cycle the way a user runs it:
+#   uv tool install -> install (with and without the login service) -> many sessions, bursts,
+#   tunnel recovery -> update -> uninstall, which must leave both home directories as they were.
 set -euo pipefail
 
 ROOT=/repo
 FIXTURE=/fixture
 HOME_DIR=$FIXTURE/home
-RELEASE=$FIXTURE/release
+SRC=$FIXTURE/src
 BIN_DIR=$FIXTURE/bin
 CODE_LOG=$FIXTURE/code.log
 SSH_CONFIG=$HOME_DIR/.ssh/config
@@ -20,12 +22,21 @@ wait_for() {  # wait_for <seconds> <description> <command...>
     fail "timed out waiting for $what"
 }
 code_on_remote() { remote "\$HOME/.local/bin/code $*"; }
-tunnel_up() { "$HOME_DIR/.local/bin/remote-code-bridge" status | grep -q 'tunnel:      up'; }
+tunnel_up() { remote-code-bridge status | grep -q 'tunnel:      up'; }
+# Every path under a home directory, with file checksums and link targets.
+snapshot_script='cd "$1" && find . -mindepth 1 -not -path "./.ssh*" | sort | while IFS= read -r f; do
+  if [ -L "$f" ]; then echo "$f -> $(readlink "$f")"; elif [ -f "$f" ]; then echo "$f $(md5sum <"$f" | cut -c1-32)"; else echo "$f/"; fi
+done'
+host_snapshot() { sh -c "$snapshot_script" _ "$HOME_DIR"; }
+same_as() {  # same_as <description> <before> <after>: exact match, or show the difference and fail
+    [ "$2" = "$3" ] || { diff <(printf '%s\n' "$2") <(printf '%s\n' "$3") >&2; fail "uninstall left traces on $1"; }
+}
+remote_snapshot() { remote "sh -c '$(printf '%s' "$snapshot_script" | sed "s/'/'\\\\''/g")' _ \$HOME; ls -d /tmp/remote-code-bridge-* 2>/dev/null || :"; }
 
-rm -rf "$HOME_DIR" "$RELEASE" "$BIN_DIR" "$CODE_LOG"
-mkdir -p "$HOME_DIR/.ssh" "$RELEASE" "$BIN_DIR"
+rm -rf "$HOME_DIR" "$SRC" "$BIN_DIR" "$CODE_LOG" "$FIXTURE/uv"
+mkdir -p "$HOME_DIR/.ssh" "$BIN_DIR"
 
-# -- fixtures: an SSH key, an ssh config with a v1 leftover, fake VS Code and systemctl ----------
+# -- fixtures: an SSH key, an ssh config with a version 1 leftover, fake VS Code and systemctl ---
 ssh-keygen -q -t ed25519 -N '' -f "$FIXTURE/id_ed25519"
 cp "$FIXTURE/id_ed25519.pub" /public/id_ed25519.pub
 chmod 644 /public/id_ed25519.pub
@@ -47,7 +58,7 @@ cat >"$BIN_DIR/systemctl" <<'SYSTEMCTL'
 #!/bin/sh
 unit="$HOME/.config/systemd/user/remote-code-bridge.service"
 case "$*" in
-  *stop*|*restart*) pkill -f 'remote-code-bridge.pyz" serve' || :; sleep 0.5 ;;
+  *stop*|*restart*|*disable*) pkill -f 'remote_code_bridge serve' || :; sleep 0.5 ;;
 esac
 case "$*" in
   # `exec` the redirections first: otherwise sh keeps a copy of the caller's stdout pipe open
@@ -59,46 +70,39 @@ exit 0
 SYSTEMCTL
 chmod 755 "$BIN_DIR/code" "$BIN_DIR/systemctl"
 
-# -- a local "GitHub release" ----------------------------------------------------------------
-build_release() {
-    PYTHONPATH=$ROOT python3 -m remote_code_bridge.bundle "$RELEASE/remote-code-bridge.pyz" "$1" >/dev/null
-    (cd "$RELEASE" && sha256sum remote-code-bridge.pyz >remote-code-bridge.pyz.sha256)
-}
-build_release 2.0.0
-python3 -m http.server 18080 --bind 127.0.0.1 --directory "$RELEASE" >/dev/null 2>&1 &
-HTTP_PID=$!
-trap 'kill $HTTP_PID 2>/dev/null || :; pkill -f "remote-code-bridge.pyz\" serve" || :' EXIT
-
-export HOME=$HOME_DIR PATH=$BIN_DIR:$PATH SHELL=/bin/bash FIXTURE_LOG=$FIXTURE/serve.log
-export RCB_RELEASE_URL=http://127.0.0.1:18080
-wait_for 10 "release server" curl -fs "$RCB_RELEASE_URL/remote-code-bridge.pyz.sha256"
+# uv keeps its tools and cache outside HOME here, so the home snapshots only show our own traces.
+export UV_TOOL_DIR=$FIXTURE/uv/tools UV_TOOL_BIN_DIR=$FIXTURE/uv/bin UV_CACHE_DIR=$FIXTURE/uv/cache
+export HOME=$HOME_DIR PATH=$FIXTURE/uv/bin:$BIN_DIR:$PATH SHELL=/bin/bash FIXTURE_LOG=$FIXTURE/serve.log
+trap 'pkill -f "remote_code_bridge serve" || :; pkill -f "remote-code-bridge serve" || :' EXIT
 wait_for 30 "sshd in the remote container" ssh -o BatchMode=yes devbox true
 
-# -- install through the bootstrap (this also verifies the tunnel and the remote end to end) ------
-sh "$ROOT/install.sh" devbox
+HOST_BEFORE=$(host_snapshot)
+REMOTE_BEFORE=$(remote_snapshot)
+
+# -- install: uv tool install, then set up the remote and the login service --------------------
+cp -r "$ROOT" "$SRC"
+uv tool install "$SRC" >/dev/null
+remote-code-bridge install devbox --service --yes
 HOST_ENV=$HOME_DIR/.config/remote-code-bridge/host.env
 TOKEN=$(sed -n 's/^REMOTE_CODE_BRIDGE_TOKEN=//p' "$HOST_ENV")
 [ "${#TOKEN}" -eq 64 ] || fail "no token in host.env"
 grep -qx 'REMOTE_CODE_BRIDGE_ALLOWED_HOSTS=devbox,devbox-again' "$HOST_ENV" || fail "equivalent aliases not grouped"
 [ "$(remote 'sed -n "s/^REMOTE_CODE_BRIDGE_TOKEN=//p" ~/.config/remote-code-bridge/remote.env')" = "$TOKEN" ] \
     || fail "remote token differs"
-if grep -q 'remote-code-bridge' "$SSH_CONFIG"; then fail "v1 include block was not removed"; fi
-[ ! -e "$HOME_DIR/.ssh/remote-code-bridge" ] || fail "v1 managed directory was not removed"
+if grep -q 'remote-code-bridge' "$SSH_CONFIG"; then fail "version 1 include block was not removed"; fi
+[ ! -e "$HOME_DIR/.ssh/remote-code-bridge" ] || fail "version 1 managed directory was not removed"
 remote '[ "$(readlink ~/.local/bin/code)" = remote-code-bridge ]' || fail "remote code link missing"
 printf 'install: ok\n'
 
 # -- many sessions: none of them owns the tunnel, so every one can open VS Code -------------------
-# Long-lived sessions stay open the whole time (like terminals you leave around)...
-for i in 1 2 3; do ssh devbox 'sleep 300' & done
+for _ in 1 2 3; do ssh devbox 'sleep 300' & done  # terminals you leave open
 sleep 1
-# ...while new sessions come and go and use `code`.
 for i in 1 2 3 4 5 6; do code_on_remote "/srv/session-$i" >/dev/null || fail "code failed in session $i"; done
-# And a burst: 12 `code` processes at the same instant. (One SSH session runs them: sshd itself
-# drops more than 10 simultaneous new logins by default, which is not what we are testing.)
+# A burst of 12 `code` commands at once (from one session: sshd itself refuses >10 simultaneous logins).
 remote 'for i in $(seq 1 12); do ~/.local/bin/code /srv/burst-$i >/dev/null & done; wait'
 wait_for 20 "18 VS Code launches" sh -c "[ \$(wc -l <'$CODE_LOG') -eq 18 ]"
 grep -qx -- '--remote ssh-remote+devbox /srv/burst-7' "$CODE_LOG" || fail "unexpected code arguments"
-printf 'concurrent sessions and burst: ok\n'
+printf 'sessions and burst: ok\n'
 
 # -- the tunnel heals itself, whichever end dies --------------------------------------------------
 pkill -f '^ssh .*-N .*bridge.sock' || fail "no tunnel process to kill"
@@ -107,12 +111,37 @@ remote 'pkill -u "$(id -u)" -f "sshd: rcbremote" || :' || :
 wait_for 30 "tunnel after killing remote sshd" code_on_remote /srv/after-remote-kill
 printf 'tunnel recovery: ok\n'
 
-# -- update keeps the token and installs the new version ------------------------------------------
-build_release 2.0.1
-"$HOME_DIR/.local/bin/remote-code-bridge" update
-[ "$(sed -n 's/^REMOTE_CODE_BRIDGE_TOKEN=//p' "$HOST_ENV")" = "$TOKEN" ] || fail "update changed the token"
+# -- update: a newer package version reaches the host and the remote, keeping the token ----------
+sed -i 's/^__version__ = .*/__version__ = "2.0.1"/' "$SRC/remote_code_bridge/__init__.py"
+RCB_PACKAGE_SPEC=$SRC remote-code-bridge update
+remote-code-bridge --version | grep -q 2.0.1 || fail "host not updated"
 remote '~/.local/bin/remote-code-bridge --version' | grep -q 2.0.1 || fail "remote not updated"
+[ "$(sed -n 's/^REMOTE_CODE_BRIDGE_TOKEN=//p' "$HOST_ENV")" = "$TOKEN" ] || fail "update changed the token"
 wait_for 30 "tunnel after update" code_on_remote /srv/after-update
 wait_for 10 "host status up" tunnel_up
 printf 'update: ok\n'
+
+# -- uninstall: nothing left on either machine -----------------------------------------------------
+pkill -f 'ssh devbox sleep 300' || :
+remote-code-bridge uninstall --yes
+uv tool uninstall remote-code-bridge >/dev/null
+hash -r  # forget bash's cached location of the removed command
+[ ! -e "$UV_TOOL_BIN_DIR/remote-code-bridge" ] && ! command -v remote-code-bridge >/dev/null || fail "command still installed"
+pgrep -f 'remote_code_bridge serve' >/dev/null && fail "service still running"
+same_as "the host" "$HOST_BEFORE" "$(host_snapshot)"
+same_as "the remote" "$REMOTE_BEFORE" "$(remote_snapshot)"
+printf 'uninstall (service): ok, no traces\n'
+
+# -- without the login service: run `serve` yourself ---------------------------------------------
+uv tool install "$SRC" >/dev/null
+remote-code-bridge install devbox --no-service --yes  # checks the tunnel with a temporary bridge
+[ ! -e "$HOME_DIR/.config/systemd" ] || fail "a service was registered without --service"
+remote-code-bridge serve >>"$FIXTURE_LOG" 2>&1 &
+wait_for 20 "manually started bridge" code_on_remote /srv/manual
+pkill -f 'remote-code-bridge serve'
+remote-code-bridge uninstall --yes
+uv tool uninstall remote-code-bridge >/dev/null
+same_as "the host (no service)" "$HOST_BEFORE" "$(host_snapshot)"
+same_as "the remote (no service)" "$REMOTE_BEFORE" "$(remote_snapshot)"
+printf 'no-service install and uninstall: ok, no traces\n'
 printf 'native Linux end-to-end test passed\n'

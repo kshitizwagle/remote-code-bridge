@@ -1,16 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
 [project]
 name = "remote-code-bridge"
 dynamic = ["version"]
-description = "Run `code .` on an SSH remote and open VS Code on your own machine."
+description = "Run `code .` in any SSH session on a Linux remote and open it in VS Code on your own machine."
+readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.8"
 dependencies = []  # standard library only, on purpose
+keywords = ["vscode", "ssh", "remote-development", "tunnel"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/kshitizwagle/remote-code-bridge"
+
+[project.scripts]
+remote-code-bridge = "remote_code_bridge.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.6"]
 
-[tool.setuptools.dynamic]
-version = { attr = "remote_code_bridge.__version__" }
+[tool.hatch.version]
+path = "remote_code_bridge/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["remote_code_bridge", "tests", "README.md", "LICENSE", "docs"]
 
 [tool.ruff]
 line-length = 120
@@ -22,6 +45,5 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-
-[tool.coverage.run]
-source = ["remote_code_bridge"]
+# Print every thread's stack if a test hangs, instead of silently timing out in CI.
+faulthandler_timeout = 60
