@@ -1,0 +1,27 @@
+[project]
+name = "remote-code-bridge"
+dynamic = ["version"]
+description = "Run `code .` on an SSH remote and open VS Code on your own machine."
+license = { text = "MIT" }
+requires-python = ">=3.8"
+dependencies = []  # standard library only, on purpose
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.6"]
+
+[tool.setuptools.dynamic]
+version = { attr = "remote_code_bridge.__version__" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["remote_code_bridge"]
