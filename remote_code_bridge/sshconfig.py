@@ -20,6 +20,8 @@ from remote_code_bridge import BridgeError, is_valid_alias, ssh
 MAX_DEPTH, MAX_FILES, MAX_ALIASES = 16, 128, 256
 # Owners/writers that are as trusted as you on Windows: SYSTEM and the Administrators group.
 WINDOWS_TRUSTED_SIDS = ("S-1-5-18", "S-1-5-32-544")
+# "OWNER RIGHTS" grants access to whoever owns the file, and the owner is checked separately.
+WINDOWS_OWNER_RIGHTS_SID = "S-1-3-4"
 
 
 def split_words(text: str, where: str) -> list[str]:
@@ -166,7 +168,7 @@ def _check_windows_acl(path: Path) -> None:
     if acl["owner"] not in trusted:
         raise BridgeError(f"refusing SSH config {path}: it is not owned by you (owner {acl['owner']})")
     writers = acl["writers"] if isinstance(acl["writers"], list) else [acl["writers"]]
-    others = sorted({writer for writer in writers if writer and writer not in trusted})
+    others = sorted({writer for writer in writers if writer and writer not in (*trusted, WINDOWS_OWNER_RIGHTS_SID)})
     if others:
         raise BridgeError(
             f"refusing SSH config {path}: it is writable by other users ({', '.join(others)}); "

@@ -58,8 +58,21 @@ def test_client_reports_host_errors(server):
         open_in_vscode(config, ["/srv"])
 
 
+@pytest.fixture
+def short_tmp():
+    """macOS's per-user temp directory is too long for a Unix socket path (104 bytes)."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    directory = Path(tempfile.mkdtemp(prefix="rcb", dir="/tmp"))
+    yield directory
+    shutil.rmtree(directory, ignore_errors=True)
+
+
 @unix_only
-def test_client_round_trip_over_a_unix_socket(server, tmp_path):
+def test_client_round_trip_over_a_unix_socket(server, short_tmp):
+    tmp_path = short_tmp
     """The remote client talks to a Unix socket; here a tiny relay plays the part of `ssh -R`."""
     path = str(tmp_path / "bridge.sock")
     listener = socket.socket(socket.AF_UNIX)
@@ -85,7 +98,8 @@ def test_client_round_trip_over_a_unix_socket(server, tmp_path):
 
 
 @unix_only
-def test_missing_socket_explains_the_tunnel(tmp_path):
+def test_missing_socket_explains_the_tunnel(short_tmp):
+    tmp_path = short_tmp
     config = RemoteConfig(host_alias="devbox", token=TOKEN, socket=str(tmp_path / "nope.sock"))
     with pytest.raises(BridgeError) as error:
         open_in_vscode(config, ["/x"])
