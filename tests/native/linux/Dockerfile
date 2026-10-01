@@ -12,7 +12,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ARG RCB_UID=1000
-RUN useradd --uid "$RCB_UID" --home-dir /fixture/home --no-create-home --shell /bin/bash rcb
+# ubuntu:24.04 ships an `ubuntu` user with UID 1000; free the UID for the test user.
+RUN if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi \
+    && useradd --uid "$RCB_UID" --home-dir /fixture/home --no-create-home --shell /bin/bash rcb
 
 COPY remote-entrypoint.sh /usr/local/bin/remote-entrypoint.sh
 RUN chmod 755 /usr/local/bin/remote-entrypoint.sh

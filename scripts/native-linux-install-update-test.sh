@@ -20,6 +20,7 @@ RCB_PUBLIC_DIR=$PUBLIC; export RCB_PUBLIC_DIR
 export RCB_UID
 if ! $COMPOSE run --rm host /repo/tests/native/linux/run-install-update.sh; then
     $COMPOSE logs --no-color remote >&2 || :
+    cat "$FIXTURE/serve.log" >&2 2>/dev/null || :
     exit 1
 fi
 printf '%s\n' 'native Linux install/update test passed'

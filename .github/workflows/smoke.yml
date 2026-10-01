@@ -10,56 +10,63 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Check formatting
-        run: cargo fmt --check
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ruff
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Build test binary
-        run: cargo build --locked
-      - name: Test
-        run: cargo test --locked
-      - name: Check Rust coverage
-        run: |
-          rustup component add llvm-tools-preview
-          cargo install cargo-llvm-cov --version 0.8.7 --locked
-          cargo llvm-cov --all-targets --locked --fail-under-lines 80
+        run: ruff check .
+      - name: Check formatting
+        run: ruff format --check .
       - name: Check installer syntax
         run: sh -n install.sh
-      - name: Test installer
-        run: ./scripts/install-test.sh
-      - name: Check Windows installer contract
-        run: ./scripts/windows-install-test.sh
-      - name: Test artifact lookup
-        run: ./scripts/find-artifacts-test.sh
-      - name: Native Linux installer/update E2E
-        run: ./scripts/native-linux-install-update-test.sh
-      - name: Smoke test
-        run: ./scripts/smoke-test.sh
 
-  windows-installer:
-    runs-on: windows-2022
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, python: '3.13', coverage: true }
+          - { os: ubuntu-22.04, python: '3.8' }
+          - { os: macos-15, python: '3.13' }
+          - { os: windows-2022, python: '3.13' }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Build test binary
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest pytest-cov
+      - name: Test (with the 80% line-coverage gate)
+        if: matrix.coverage
+        run: python -m pytest --cov=remote_code_bridge --cov-report=term-missing --cov-fail-under=80
+      - name: Test
+        if: ${{ !matrix.coverage }}
+        run: python -m pytest
+      - name: Parse install.ps1 with Windows PowerShell and PowerShell Core
+        if: runner.os == 'Windows'
         shell: pwsh
-        run: cargo build --locked
-      # Windows PowerShell only: the fixture compiles a native FakeSsh.exe via
-      # `Add-Type -OutputType ConsoleApplication`, which PowerShell Core does
-      # not support. The parser tests below still run under both hosts.
-      - name: Native Windows installer/update E2E with Windows PowerShell
-        shell: powershell
-        run: ./scripts/native-windows-install-update-test.ps1
-      - name: Test Windows installer with Windows PowerShell
-        shell: powershell
-        run: ./scripts/windows-parser-test.ps1
-      - name: Test Windows installer with PowerShell Core
-        shell: pwsh
-        run: ./scripts/windows-parser-test.ps1
+        run: |
+          foreach ($shell in 'powershell', 'pwsh') {
+            & $shell -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$e); if ($e) { $e; exit 1 }'
+            if ($LASTEXITCODE) { exit 1 }
+          }
+
+  native-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Smoke test the release archive
+        run: ./scripts/smoke-test.sh
+      - name: End-to-end against a real sshd (install, concurrent sessions, recovery, update)
+        run: ./scripts/native-linux-install-update-test.sh

@@ -1,56 +1,37 @@
 #!/usr/bin/env bash
+# Quick check of the release archive: `serve` in dry-run mode, then `code` (a symlink to the archive).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${REMOTE_CODE_BRIDGE_PORT:-39731}"
-TEST_TOKEN="${REMOTE_CODE_BRIDGE_TOKEN:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
-HOST_ALIAS="${REMOTE_CODE_BRIDGE_HOST_ALIAS:-devbox}"
+TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 TMP_DIR="$(mktemp -d)"
-BIN="$ROOT_DIR/target/debug/remote-code-bridge"
-CODE="$TMP_DIR/code"
-
 cleanup() {
-    if [[ -n "${SERVER_PID:-}" ]]; then
-        kill "$SERVER_PID" >/dev/null 2>&1 || true
-    fi
+    [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" >/dev/null 2>&1 || true
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
 
-cargo build --locked --quiet --manifest-path "$ROOT_DIR/Cargo.toml"
-ln -s "$BIN" "$CODE"
+PYTHONPATH="$ROOT_DIR" python3 -m remote_code_bridge.bundle "$TMP_DIR/remote-code-bridge.pyz" >/dev/null
+chmod 755 "$TMP_DIR/remote-code-bridge.pyz"
+ln -s remote-code-bridge.pyz "$TMP_DIR/code"
 
-REMOTE_CODE_BRIDGE_TOKEN="$TEST_TOKEN" \
-REMOTE_CODE_BRIDGE_PORT="$PORT" \
-REMOTE_CODE_BRIDGE_DEFAULT_HOST="$HOST_ALIAS" \
-REMOTE_CODE_BRIDGE_ALLOWED_HOSTS="$HOST_ALIAS" \
-REMOTE_CODE_BRIDGE_DRY_RUN=1 \
-"$BIN" serve >/tmp/remote-code-bridge-smoke.log 2>&1 &
+export HOME="$TMP_DIR" REMOTE_CODE_BRIDGE_TOKEN="$TOKEN" REMOTE_CODE_BRIDGE_PORT="$PORT"
+REMOTE_CODE_BRIDGE_DEFAULT_HOST=devbox REMOTE_CODE_BRIDGE_DRY_RUN=1 REMOTE_CODE_BRIDGE_TUNNEL=0 \
+    "$TMP_DIR/remote-code-bridge.pyz" serve 2>"$TMP_DIR/serve.log" &
 SERVER_PID=$!
+for _ in $(seq 1 50); do
+    curl --fail --silent --max-time 1 "http://127.0.0.1:${PORT}/healthz" >/dev/null && break
+    sleep 0.1
+done
 
-wait_for_health() {
-    for _ in $(seq 1 50); do
-        if curl --fail --silent --show-error --max-time 1 "http://127.0.0.1:${PORT}/healthz" >/dev/null; then
-            return 0
-        fi
-        sleep 0.1
-    done
-    echo "remote-code-bridge: host bridge did not become healthy" >&2
-    return 1
-}
-wait_for_health
-
-output="$(REMOTE_CODE_BRIDGE_TOKEN="$TEST_TOKEN" \
-REMOTE_CODE_BRIDGE_PORT="$PORT" \
-REMOTE_CODE_BRIDGE_HOST_ALIAS="$HOST_ALIAS" \
-"$CODE" --reuse-window .)"
-
-expected="--reuse-window --remote ssh-remote+${HOST_ALIAS} $(pwd -P)"
-if [[ "$output" != *"$expected"* ]]; then
+output="$(REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox "$TMP_DIR/code" --reuse-window .)"
+expected="dry-run command: code --reuse-window --remote ssh-remote+devbox $(pwd -P)"
+if [[ "$output" != "$expected" ]]; then
     echo "remote-code-bridge: unexpected dry-run command" >&2
-    echo "  expected to contain: $expected" >&2
-    echo "  got: $output" >&2
+    echo "  expected: $expected" >&2
+    echo "  got:      $output" >&2
+    cat "$TMP_DIR/serve.log" >&2
     exit 1
 fi
-
 echo "smoke test passed"
