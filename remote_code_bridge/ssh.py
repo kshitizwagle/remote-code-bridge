@@ -68,6 +68,17 @@ def run(
         return subprocess.CompletedProcess(argv, 255, b"", f"ssh timed out after {timeout}s".encode())
 
 
+def run_local(arguments: Sequence[str]) -> subprocess.CompletedProcess:
+    """Run ssh for a purely local query, such as `ssh -G alias`."""
+    argv = ssh_program() + NO_MULTIPLEX + list(arguments)
+    try:
+        return subprocess.run(
+            argv, stdin=subprocess.DEVNULL, capture_output=True, env=child_env(), creationflags=CREATION_FLAGS
+        )
+    except FileNotFoundError as error:
+        raise BridgeError("ssh was not found; install OpenSSH") from error
+
+
 def last_line(stderr: bytes) -> str:
     lines = [line.strip() for line in stderr.decode("utf-8", "replace").splitlines() if line.strip()]
     return lines[-1][:200] if lines else ""

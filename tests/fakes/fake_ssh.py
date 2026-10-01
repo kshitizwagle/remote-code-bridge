@@ -3,6 +3,7 @@
 Environment knobs (all optional):
   FAKE_SSH_LOG          append one JSON line per call: {"argv": [...], "alias": ..., "command": ...}
   FAKE_SSH_HOSTS        JSON {"alias": "hostname user port"} for `ssh -G`; unknown aliases map to themselves
+  FAKE_SSH_G_FAIL       comma-separated aliases for which `ssh -G` fails
   FAKE_SSH_UNREACHABLE  comma-separated aliases that fail like a dead host
   FAKE_SSH_TUNNEL       for `-N` calls: "stay" (run until killed), "exit:<code>:<stderr message>",
                         or "after:<seconds>:<code>:<stderr message>" (stay up that long, then exit)
@@ -43,6 +44,9 @@ def main() -> int:
             handle.write(json.dumps({"argv": argv, "alias": alias, "command": remote_command}) + "\n")
 
     if "G" in flags:
+        if alias in (os.environ.get("FAKE_SSH_G_FAIL") or "").split(","):
+            print(f"{alias}: bad configuration", file=sys.stderr)
+            return 255
         hosts = json.loads(os.environ.get("FAKE_SSH_HOSTS") or "{}")
         hostname, user, port = (hosts.get(alias) or f"{alias} user 22").split()
         print(f"hostname {hostname}\nuser {user}\nport {port}")
