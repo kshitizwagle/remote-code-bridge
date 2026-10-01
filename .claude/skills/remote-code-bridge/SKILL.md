@@ -1,151 +1,50 @@
 ---
 name: remote-code-bridge-conventions
-description: Development conventions and patterns for remote-code-bridge. Rust project with conventional commits.
+description: Development conventions for remote-code-bridge, a standard-library-only Python project (3.8+) with conventional commits.
 ---
 
 # Remote Code Bridge Conventions
 
-> Generated from [kshitizwagle/remote-code-bridge](https://github.com/kshitizwagle/remote-code-bridge) on 2026-08-09
-
 ## Overview
 
-This skill teaches Claude the development patterns and conventions used in remote-code-bridge.
+`remote-code-bridge` lets `code .` on an SSH remote open VS Code on the user's own machine. One Python package, `remote_code_bridge/`, is shipped as a single zipapp, `remote-code-bridge.pyz`. Read `docs/ARCHITECTURE.md` before changing behaviour, and `docs/SECURITY.md` before touching validation, tokens, or SSH options.
 
-## Tech Stack
+## Hard rules
 
-- **Primary Language**: Rust
-- **Architecture**: hybrid module organization
-- **Test Location**: separate
+- **Standard library only**, and it must run on **Python 3.8**: use `from __future__ import annotations`, and no `match` statements or 3.9+ APIs at runtime. CI runs the tests on 3.8.
+- Every `ssh` call goes through `remote_code_bridge/ssh.py`. Helper connections keep `NO_MULTIPLEX` + `NO_FORWARDS`; the tunnel connection must *not* use `ClearAllForwardings` (it would drop its own `-R`).
+- Never put the token on a command line, in a URL, a filename, or a log. Scrub `SECRET_ENV` from child environments.
+- Commands sent to the remote must survive any login shell (bash, zsh, fish): wrap scripts with `ssh.sh(...)` and avoid backslashes, or send base64 like `install.REMOTE_BOOTSTRAP`.
+- User-facing errors are `BridgeError("plain sentence")`; the CLI prints `remote-code-bridge: <message>` and exits 2.
 
-## When to Use This Skill
+## Layout
 
-Activate this skill when:
-- Making changes to this repository
-- Adding new features following established patterns
-- Writing tests that match project conventions
-- Creating commits with proper message format
+| Path | Purpose |
+|---|---|
+| `remote_code_bridge/protocol.py`, `server.py`, `httpio.py` | host HTTP service |
+| `remote_code_bridge/tunnel.py` | the reverse-tunnel supervisor |
+| `remote_code_bridge/client.py` | the remote `code` command |
+| `remote_code_bridge/install.py`, `remote_setup.py`, `sshconfig.py`, `service.py`, `update.py` | installation |
+| `install.sh`, `install.ps1` | small bootstraps: find Python, download and verify the `.pyz`, run `install` |
+| `tests/` | pytest; `tests/fakes/fake_ssh.py` stands in for ssh (selected with `RCB_SSH`) |
+| `tests/native/linux/` | Docker end-to-end test against a real sshd |
 
-## Commit Conventions
+## Checks
 
-Follow these commit message conventions based on 6 analyzed commits.
+```sh
+python3 -m pytest --cov=remote_code_bridge --cov-fail-under=80
+ruff check . && ruff format --check .
+./scripts/smoke-test.sh
+./scripts/native-linux-install-update-test.sh   # needs Docker
+```
 
-### Commit Style: Conventional Commits
+Add a regression test for every bug fix. Installer behaviour is tested end to end in `tests/test_install.py`, by running the real installer against the fake ssh with a separate "remote" HOME.
 
-### Prefixes Used
+## Commits
 
-- `fix`
-- `feat`
-- `docs`
-
-### Message Guidelines
-
-- Average message length: ~47 characters
-- Keep first line concise and descriptive
-- Use imperative mood ("Add feature" not "Added feature")
-
-
-*Commit message example*
+Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `ci:`, `chore:`), imperative mood, a short first line, for example:
 
 ```text
-fix: make action versions readable and checkout stable refs
+fix: skip SSH aliases that ssh -G cannot resolve
+feat: keep one reverse tunnel per remote in the host service
 ```
-
-*Commit message example*
-
-```text
-feat: add Windows installer and alias grouping
-```
-
-*Commit message example*
-
-```text
-docs: clarify SSH control socket cleanup
-```
-
-*Commit message example*
-
-```text
-fix: reject unsupported Windows architectures
-```
-
-*Commit message example*
-
-```text
-fix: expire dead SSH forwarding sessions
-```
-
-*Commit message example*
-
-```text
-feat: add self-update command and manual releases
-```
-
-## Architecture
-
-### Project Structure: Single Package
-
-This project uses **hybrid** module organization.
-
-### Configuration Files
-
-- `.github/workflows/release.yml`
-- `.github/workflows/smoke.yml`
-
-### Guidelines
-
-- This project uses a hybrid organization
-- Follow existing patterns when adding new code
-
-## Code Style
-
-### Language: Rust
-
-### Naming Conventions
-
-| Element | Convention |
-|---------|------------|
-| Files | camelCase |
-| Functions | camelCase |
-| Classes | PascalCase |
-| Constants | SCREAMING_SNAKE_CASE |
-
-### Import Style: Relative Imports
-
-### Export Style: Named Exports
-
-
-*Preferred import style*
-
-```typescript
-// Use relative imports
-import { Button } from '../components/Button'
-import { useAuth } from './hooks/useAuth'
-```
-
-*Preferred export style*
-
-```typescript
-// Use named exports
-export function calculateTotal() { ... }
-export const TAX_RATE = 0.1
-export interface Order { ... }
-```
-
-## Best Practices
-
-Based on analysis of the codebase, follow these practices:
-
-### Do
-
-- Use conventional commit format (feat:, fix:, etc.)
-- Use camelCase for file names
-- Prefer named exports
-
-### Don't
-
-- Don't write vague commit messages
-- Don't deviate from established patterns without discussion
-
----
-
-*This skill was auto-generated by [ECC Tools](https://ecc.tools). Review and customize as needed for your team.*

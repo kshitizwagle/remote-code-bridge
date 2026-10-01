@@ -7,7 +7,7 @@
     "explanations": true
   },
   "domains": [
-    "rust"
+    "python"
   ],
   "suggestedBy": "ecc-tools-repo-analysis",
   "createdAt": "2026-08-09T07:30:31.232Z"

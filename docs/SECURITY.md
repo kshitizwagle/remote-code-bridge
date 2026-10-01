@@ -1,55 +1,39 @@
 # Security
 
-This project lets a remote SSH session request that your host opens VS Code on an already configured SSH alias. Keep that path narrow.
+This project lets a remote SSH session ask your machine to open VS Code on an SSH alias you already use. Keep that path narrow.
 
 ## Boundaries
 
-- The host service accepts connections only on `127.0.0.1`.
-- The remote reaches it only through the SSH `RemoteForward` installed for aliases resolving to the selected target.
-- `POST /open` requires an exact bearer token comparison.
-- Requests are capped at 64 KiB and must contain an absolute remote path.
-- The host may restrict aliases with `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
-- The VS Code command is launched as an argument list, never a shell command string.
-
-Do not change `REMOTE_CODE_BRIDGE_BIND` away from `127.0.0.1`. The bridge rejects non-localhost binding rather than exposing a command-opening endpoint to the network.
+- The host service listens only on `127.0.0.1`. It refuses to start with any other `REMOTE_CODE_BRIDGE_BIND`.
+- The remote reaches it only through a reverse tunnel that the host service opens itself. On the remote that tunnel is a Unix socket inside a directory owned by you with mode 0700, so other users on a shared remote can't connect to it or squat on it to collect your token. (Version 1 used TCP port 39731 on the remote's localhost, which any local user could bind first.)
+- `POST /open` and `POST /check` require the bearer token, compared in constant time.
+- Requests are capped at 64 KiB of body, 16 KiB of headers, and 5 seconds in total.
+- The path must be an absolute POSIX path without control characters. The alias must look like a concrete SSH alias (`[A-Za-z0-9][A-Za-z0-9._-]*`, so it can never become an `ssh` option) and be in `REMOTE_CODE_BRIDGE_ALLOWED_HOSTS`.
+- Only `--reuse-window`/`-r`, `--new-window`/`-n`, and `--goto`/`-g` are forwarded to VS Code.
+- VS Code is started as an argument list, never through a shell. On Windows, when `code` is the `code.cmd` batch launcher, paths containing `" % ! ^ & | < >` are rejected, because `cmd.exe` interprets them even inside quotes.
+- Child processes (VS Code, `ssh`, the installer) never inherit `REMOTE_CODE_BRIDGE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`.
 
 ## Tokens
 
-`remote-code-bridge generate-token` generates a 32-byte hexadecimal token. The installer reuses a valid existing host token or generates one, writes host and remote configuration with mode `0600`, and transfers the remote configuration over SSH standard input. It does not expose the token in command arguments, URLs, filenames, or normal installer output.
+`remote-code-bridge generate-token` prints 32 random bytes as hex. The installer reuses a valid existing host token or generates one, writes `host.env` and `remote.env` readable only by you (mode 0600; on Windows an ACL for your account only), and sends the remote copy over SSH standard input. The token never appears in a command line, URL, filename, or log (the log redacts it).
 
-Treat the token like a password. Do not commit either configuration file, paste the token into issue reports, or place it in a GitHub download URL. If an anonymous release download is rate-limited, export `GH_TOKEN` in the current shell and retry the installer; it is used only for the authenticated retry.
+Treat the token like a password. Don't commit either config file or paste it into issues. To rotate it, delete `REMOTE_CODE_BRIDGE_TOKEN` from `host.env` and re-run the installer.
 
-The convenience commands use the mutable `latest` release. The PowerShell `irm ... | iex` form executes the downloaded script in the current session; for a reproducible supply-chain check, download a versioned `install.sh` or `install.ps1` and its matching checksum, verify it, then run the installer.
+## Downloads
 
-`remote-code-bridge update` downloads the latest installer and runs it with the saved SSH alias. It uses `curl` on POSIX hosts or built-in PowerShell on Windows; if GitHub rate-limits the download, export `GH_TOKEN` and retry.
+The convenience install commands use the mutable `latest` release, and `irm … | iex` runs the downloaded script directly. For a reproducible check, download a versioned `install.sh` or `install.ps1` and its `.sha256`, verify it, then run it. The bootstraps and `remote-code-bridge update` verify `remote-code-bridge.pyz` against its `.sha256` before running it. `GH_TOKEN` is used only to retry a download after GitHub answers 403/429, and is passed to `curl` on standard input.
 
-## SSH requirements
+## SSH
 
-The remote SSH server must permit TCP forwarding. In `sshd_config` this normally requires:
+- **The host service connects to the remote with your own SSH configuration and credentials**, without a prompt (`BatchMode=yes`), and keeps that one connection open while you're logged in.
+- **What the remote sshd must allow:** forwarding to Unix sockets (`AllowStreamLocalForwarding yes`, the default, and no `DisableForwarding`).
+- **Your `~/.ssh/config` is not modified.**
+- **Helper connections can't be redirected.** Installer probes and the tunnel's preparation step use `ClearAllForwardings=yes` and `ControlPath=none`, so they never request forwards or share a connection with your sessions.
 
-```sshconfig
-AllowTcpForwarding yes
-```
+## SSH config discovery
 
-The managed client configuration adds:
-
-```sshconfig
-RemoteForward 127.0.0.1:39731 127.0.0.1:39731
-ExitOnForwardFailure yes
-ServerAliveInterval 15
-ServerAliveCountMax 3
-ControlMaster auto
-ControlPath ~/.ssh/remote-code-bridge/%C
-```
-
-`ExitOnForwardFailure` prevents a login that appears healthy but cannot reach the host bridge.
-`ServerAliveInterval` and `ServerAliveCountMax` make the SSH client close an unresponsive session, releasing its remote listener after roughly 45 seconds.
-`ControlMaster auto` and `ControlPath ~/.ssh/remote-code-bridge/%C` (POSIX hosts only) let a later connection to the same alias multiplex through an already-open master instead of requesting a second, conflicting reverse forward, and make `ssh -O exit <alias>` a reliable way to release a stale master on demand. The shortened path keeps the Unix-domain control socket within macOS's path limit.
-
-## SSH discovery trust boundary
-
-Alias discovery reads `~/.ssh/config` and recursively included files only when each file is owned by the current user, is not group/world-writable, and has no executable SSH directives (`Match exec`, `ProxyCommand`, `KnownHostsCommand`, `LocalCommand`, `PKCS11Provider`, or `SecurityKeyProvider`). This avoids executing configuration-controlled commands merely to discover equivalent aliases. Explicit aliases use the same fail-closed inspection.
+The installer reads `~/.ssh/config` and the files it includes only if each file is owned by you and not writable by other users (on Windows: owner and writers limited to you, SYSTEM, and Administrators, compared by SID). It only parses them. The one directive it refuses is `Match … exec`, because the `ssh -G` calls it makes to compare aliases would run that command. `ProxyCommand` and similar directives are allowed: `ssh -G` doesn't run them, and your own `ssh` already does.
 
 ## Threat model
 
-These controls limit accidental network access and shell injection. They do not protect against a compromised remote account that has the bridge token and can use the approved SSH alias: that account can request VS Code opens on that remote. Rotate the token by replacing both generated configuration files and restarting the host user service if you suspect exposure.
+These controls stop network exposure, other local users on the remote, and shell injection. They don't protect against someone who controls your remote account: they can read the token and ask your machine to open VS Code on the allowed aliases. Rotate the token if you suspect that.

@@ -100,7 +100,7 @@ def test_host_alias_is_required_without_default():
 
 
 def test_posix_paths_are_absolute_even_for_windows_hosts():
-    """B16: Rust's Path::is_absolute rejected /home/... on Windows hosts."""
+    """B16: version 1 treated /home/... as a relative path on Windows hosts and rejected it."""
     config = HostConfig(token="token", code_bin=r"C:\VS Code\bin\code.cmd", default_host="devbox", dry_run=True)
     assert handle(post({"path": "/home/u/project"}), config).status == 200
 
