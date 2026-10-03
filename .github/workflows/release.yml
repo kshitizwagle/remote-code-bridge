@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       tag: ${{ steps.version.outputs.tag }}
-      ref: ${{ steps.version.outputs.ref }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -57,6 +57,9 @@ jobs:
             ''|.*|*.|*..*|*[!0-9.]*) echo 'version must contain only numbers and dots' >&2; exit 1 ;;
           esac
           printf 'tag=%s\nref=%s\nversion=%s\n' "$tag" "$ref" "$version" >> "$GITHUB_OUTPUT"
+      # A release target must be a branch or a commit, not a tag name.
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@v6
       - name: Check the package version matches the tag
         env:
@@ -100,10 +103,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          RELEASE_REF: ${{ needs.build.outputs.ref }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
-            gh release create "$RELEASE_TAG" --target "$RELEASE_REF" --title "$RELEASE_TAG" --generate-notes dist/*
+            gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --title "$RELEASE_TAG" --generate-notes dist/*
           fi
