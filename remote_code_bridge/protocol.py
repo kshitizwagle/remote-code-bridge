@@ -87,10 +87,22 @@ class Launcher:
             self._slots.release()
 
 
-def build_code_command(config: HostConfig, host: str, path: str, args: list[str]) -> list[str]:
+def build_code_command(
+    config: HostConfig, host: str, path: str, args: list[str], folder: bool | None = None
+) -> list[str]:
     forwarded = [arg for arg in args if arg in SAFE_FLAGS and arg not in GOTO_FLAGS]
     goto = [arg for arg in args if arg in GOTO_FLAGS][:1]
-    return [config.code_bin, *forwarded, "--remote", f"ssh-remote+{host}", *goto, path]
+    # A bare path makes the host guess file or folder. The WSL launcher guesses by looking for the
+    # path on the host itself, finds nothing, and opens a folder as a file. The remote knows, so say it.
+    uri_path = path.replace("%", "%25").replace("#", "%23").replace("?", "%3F")
+    if folder is None or (_is_cmd(config) and "%" in uri_path):
+        return [config.code_bin, *forwarded, "--remote", f"ssh-remote+{host}", *goto, path]
+    flag = "--folder-uri" if folder else "--file-uri"
+    return [config.code_bin, *forwarded, *goto, flag, f"vscode-remote://ssh-remote+{host}{uri_path}"]
+
+
+def _is_cmd(config: HostConfig) -> bool:
+    return config.code_bin.lower().endswith((".cmd", ".bat"))
 
 
 def handle_request(
@@ -126,7 +138,10 @@ def _open(config: HostConfig, body: bytes, launcher: Launcher) -> Response:
     if not isinstance(payload, dict):
         return Response.error(400, "invalid json")
     path, host, args = payload.get("path"), payload.get("host"), payload.get("args") or []
+    folder = payload.get("folder")  # older clients leave it out
     if not isinstance(path, str) or not (host is None or isinstance(host, str)):
+        return Response.error(400, "invalid json")
+    if not (folder is None or isinstance(folder, bool)):
         return Response.error(400, "invalid json")
     if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
         return Response.error(400, "invalid json")
@@ -143,10 +158,10 @@ def _open(config: HostConfig, body: bytes, launcher: Launcher) -> Response:
         return Response.error(400, "invalid host alias")
     if config.allowed_hosts is not None and host not in config.allowed_hosts:
         return Response.error(403, f"host alias not allowed: {host}")
-    if config.code_bin.lower().endswith((".cmd", ".bat")) and CMD_UNSAFE.intersection(path):
+    if _is_cmd(config) and CMD_UNSAFE.intersection(path):
         return Response.error(400, "path contains characters unsafe for code.cmd")
 
-    command = build_code_command(config, host, path, args)
+    command = build_code_command(config, host, path, args, folder)
     if config.dry_run:
         return Response(200, {"ok": True, "dry_run": True, "command": command})
     if shutil.which(config.code_bin) is None:

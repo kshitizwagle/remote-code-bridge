@@ -24,6 +24,7 @@ class OpenRequest:
     path: str
     args: list[str] = field(default_factory=list)
     host: str | None = None
+    folder: bool = False
 
 
 def parse_open_args(arguments: Iterable[str], cwd: str | None = None) -> OpenRequest:
@@ -44,7 +45,8 @@ def parse_open_args(arguments: Iterable[str], cwd: str | None = None) -> OpenReq
         if path is not None:
             raise BridgeError("only one path is supported")
         path = raw
-    return OpenRequest(path=resolve_remote_path(path or ".", cwd), args=flags)
+    resolved = resolve_remote_path(path or ".", cwd)
+    return OpenRequest(path=resolved, args=flags, folder=os.path.isdir(resolved))
 
 
 def resolve_remote_path(path: str, cwd: str | None = None) -> str:
@@ -103,7 +105,8 @@ def send_open_request(config: RemoteConfig, request: OpenRequest) -> dict[str, A
         raise BridgeError("REMOTE_CODE_BRIDGE_HOST_ALIAS is not set")
     if not config.token:
         raise BridgeError("REMOTE_CODE_BRIDGE_TOKEN is not set")
-    body = json.dumps({"host": config.host_alias, "path": request.path, "args": request.args}).encode("utf-8")
+    payload = {"host": config.host_alias, "path": request.path, "args": request.args, "folder": request.folder}
+    body = json.dumps(payload).encode("utf-8")
     if len(body) > MAX_REQUEST_BYTES:
         raise BridgeError("request is too large")
     return call(config, "POST", "/open", body, config.token)

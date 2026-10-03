@@ -1,6 +1,6 @@
 # Architecture
 
-`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+). On your machine it is installed like any Python tool (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`, or pip), which provides the `remote-code-bridge` command. The remote gets a single-file copy of the same package (a zipapp built by `bundle.py` at install time), so it only needs `python3`.
+`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+). On your machine it is installed like any Python tool (`uv tool install remote-code-bridge` from PyPI, or pip), which provides the `remote-code-bridge` command. The remote gets a single-file copy of the same package (a zipapp built by `bundle.py` at install time), so it only needs `python3`.
 
 - `remote-code-bridge serve` is the bridge on your machine, run by the login service or by hand.
 - `remote-code-bridge open [code arguments]` is the remote client; invoked through a link named `code`, it selects `open` automatically.
@@ -57,7 +57,7 @@ Content-Type: application/json
 {"host": "devbox", "path": "/home/user/project", "args": ["--reuse-window"]}
 ```
 
-`protocol.handle_request` checks, in order: route, body size, token (constant-time), JSON shape, absolute POSIX path without control characters, alias syntax, alias allow-list, and (for a `code.cmd` launcher) characters `cmd.exe` would interpret. It then builds `[code, safe flags…, --remote, ssh-remote+<host>, (--goto|-g)?, path]` and starts it as an argument list. At most 8 launches can be in flight, and at most 4 connections are handled at once; extra ones get `503`.
+`protocol.handle_request` checks, in order: route, body size, token (constant-time), JSON shape, absolute POSIX path without control characters, alias syntax, alias allow-list, and (for a `code.cmd` launcher) characters `cmd.exe` would interpret. The remote client reports whether the path is a folder, so the bridge builds `[code, safe flags…, (--goto|-g)?, --folder-uri|--file-uri, vscode-remote://ssh-remote+<host><path>]` and starts it as an argument list. VS Code would otherwise have to guess, and the Windows `code` launcher run from WSL guesses by looking for the path on the host, then opens a missing folder as a file. Requests from older clients without the flag, and URIs that need `%` escapes for a `code.cmd` launcher, still use `[code, safe flags…, --remote, ssh-remote+<host>, (--goto|-g)?, path]`. At most 8 launches can be in flight, and at most 4 connections are handled at once; extra ones get `503`.
 
 ## Configuration
 
@@ -107,7 +107,7 @@ Reinstalls and updates merge into the record, never shrink it, so something crea
 
 `uninstall.py` stops the service, runs `~/.local/bin/remote-code-bridge uninstall --yes` on the remote (which undoes the remote manifest, deleting the very file it runs from, which is why everything is imported up front), then removes the service and undoes the host manifest. If the remote can't be reached, the service is restarted and nothing is removed, unless `--host-only` is given. Without a manifest (an install from before manifests existed), it falls back to the locations it knows it creates.
 
-`update.py` stops the service, upgrades the package with whatever installed it (`uv tool install --force --reinstall` when running from a uv tool environment, otherwise pip; `RCB_PACKAGE_SPEC` overrides the source), then runs the new version's `install <alias> --yes`. On Windows a helper script does this after the command exits, because a running `python.exe` can't be replaced.
+`update.py` looks up the latest release on PyPI and stops if it is not newer than the running version. Otherwise it stops the service, installs `remote-code-bridge>=<latest>` with whatever installed it (`uv tool install --force --reinstall` when running from a uv tool environment, otherwise pip; `RCB_PACKAGE_SPEC` overrides the source), then runs the new version's `install <alias> --yes`. On Windows a helper script does this after the command exits, because a running `python.exe` can't be replaced.
 
 ## Modules
 

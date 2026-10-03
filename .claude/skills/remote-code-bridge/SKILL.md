@@ -7,7 +7,7 @@ description: Development conventions for remote-code-bridge, a standard-library-
 
 ## Overview
 
-`remote-code-bridge` lets `code .` on an SSH remote open VS Code on the user's own machine. One Python package, `remote_code_bridge/`, installed on the host with `uv tool install git+https://github.com/kshitizwagle/remote-code-bridge` (or pip); the remote gets a single-file zipapp copy built by `bundle.py`. Read `docs/ARCHITECTURE.md` before changing behaviour, and `docs/SECURITY.md` before touching validation, tokens, or SSH options.
+`remote-code-bridge` lets `code .` on an SSH remote open VS Code on the user's own machine. One Python package, `remote_code_bridge/`, published to PyPI and installed on the host with `uv tool install remote-code-bridge` (or pip); the remote gets a single-file zipapp copy built by `bundle.py`. Read `docs/ARCHITECTURE.md` before changing behaviour, and `docs/SECURITY.md` before touching validation, tokens, or SSH options.
 
 ## Hard rules
 
@@ -16,6 +16,7 @@ description: Development conventions for remote-code-bridge, a standard-library-
 - Never put the token on a command line, in a URL, a filename, or a log. Scrub `SECRET_ENV` from child environments.
 - Commands sent to the remote must survive any login shell (bash, zsh, fish): wrap scripts with `ssh.sh(...)` and avoid backslashes, or send base64 like `install.REMOTE_BOOTSTRAP`.
 - Anything installation creates must be recorded in the machine's `Manifest` *before* it is created, so `uninstall` can remove it; never record something that already existed.
+- The version lives in both `pyproject.toml` (uv_build needs it static) and `__version__` in `remote_code_bridge/__init__.py` (the remote's zipapp reads it); change both together.
 - User-facing errors are `BridgeError("plain sentence")`; the CLI prints `remote-code-bridge: <message>` and exits 2.
 
 ## Layout

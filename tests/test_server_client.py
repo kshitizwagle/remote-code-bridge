@@ -48,7 +48,7 @@ def test_health_over_http(server):
 def test_client_round_trip_over_tcp(server):
     config = RemoteConfig(port=port_of(server), host_alias="devbox", token=TOKEN)
     assert open_in_vscode(config, ["--reuse-window", "/srv/project"]) == (
-        "dry-run command: code --reuse-window --remote ssh-remote+devbox /srv/project"
+        "dry-run command: code --reuse-window --file-uri vscode-remote://ssh-remote+devbox/srv/project"
     )
 
 
@@ -93,7 +93,10 @@ def test_client_round_trip_over_a_unix_socket(server, short_tmp):
 
     threading.Thread(target=relay, daemon=True).start()
     config = RemoteConfig(host_alias="devbox", token=TOKEN, socket=path)
-    assert open_in_vscode(config, ["-n", "/x"]) == "dry-run command: code -n --remote ssh-remote+devbox /x"
+    assert (
+        open_in_vscode(config, ["-n", "/x"])
+        == "dry-run command: code -n --file-uri vscode-remote://ssh-remote+devbox/x"
+    )
     listener.close()
 
 
@@ -229,6 +232,14 @@ def test_parse_open_args():
 def test_parse_open_args_errors(args, message):
     with pytest.raises(BridgeError, match=message):
         parse_open_args(args, cwd="/")
+
+
+def test_parse_open_args_says_whether_the_path_is_a_folder(tmp_path):
+    (tmp_path / "Downloads").mkdir()
+    (tmp_path / "Makefile").write_text("")
+    assert parse_open_args(["Downloads"], cwd=str(tmp_path)).folder is True
+    assert parse_open_args(["Makefile"], cwd=str(tmp_path)).folder is False
+    assert parse_open_args(["not-created-yet"], cwd=str(tmp_path)).folder is False
 
 
 def test_resolve_remote_path():

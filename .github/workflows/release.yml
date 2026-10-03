@@ -1,8 +1,8 @@
 name: release
 
-# Users install straight from GitHub (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`),
-# so a release only needs a tag. This workflow tests the tagged commit and attaches the built
-# wheel and sdist, for anyone who prefers to install a fixed file.
+# Publishes a release to PyPI (where `uv tool install remote-code-bridge` and
+# `remote-code-bridge update` get it) and to GitHub Releases. Push a v* tag, or run it by hand.
+# PyPI accepts the upload through trusted publishing: no token is stored in this repository.
 
 on:
   push:
@@ -26,11 +26,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      ref: ${{ steps.version.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -63,15 +64,43 @@ jobs:
         run: |
           found=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' remote_code_bridge/__init__.py)
           [ "$found" = "$VERSION" ] || { echo "remote_code_bridge/__init__.py says $found, the tag says $VERSION" >&2; exit 1; }
+          found=$(sed -n 's/^version = "\(.*\)".*/\1/p' pyproject.toml)
+          [ "$found" = "$VERSION" ] || { echo "pyproject.toml says $found, the tag says $VERSION" >&2; exit 1; }
       - name: Test
-        run: uv run --with pytest python -m pytest
+        run: uv run --no-project --with pytest python -m pytest
       - name: Build
         run: uv build
-      - name: Publish release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/remote-code-bridge/
+    permissions:
+      contents: write  # the GitHub release
+      id-token: write  # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: astral-sh/setup-uv@v6
+      # A tag push and the release it creates both run this workflow; --check-url skips files already on PyPI.
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/
+      - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_REF: ${{ steps.version.outputs.ref }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_REF: ${{ needs.build.outputs.ref }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber

@@ -11,7 +11,7 @@ remote: code .  →  SSH tunnel  →  bridge on your machine  →  code --remote
 ```
 
 ```sh
-uv tool install git+https://github.com/kshitizwagle/remote-code-bridge
+uv tool install remote-code-bridge
 remote-code-bridge install devbox
 ```
 
@@ -22,12 +22,12 @@ remote-code-bridge install devbox
 - **Heals itself.** One small bridge on your machine owns the tunnel, not any single terminal. After sleep, Wi-Fi changes, a dropped connection, or a remote reboot it reconnects on its own (dead links are noticed within about 45 seconds) and clears any leftover from the old connection first.
 - **Handles bursts.** Many `code` commands at the same moment queue up for an instant instead of failing.
 - **Feels like the real `code`.** `code .`, `code some/dir`, `code -r` / `--reuse-window`, `code -n` / `--new-window`, `code -g file:line` / `--goto`. Relative paths and `..` are resolved on the remote.
-- **Installs like any Python tool.** `uv tool install` (or `pip install`) straight from GitHub. One command then sets up the remote, and the remote only needs `python3`.
+- **Installs like any Python tool.** `uv tool install remote-code-bridge` (or `pip install`) from PyPI. One command then sets up the remote, and the remote only needs `python3`.
 - **Your choice of how it runs.** Let it start at login as a background service (a systemd user service on Linux, a launchd agent on macOS, a Scheduled Task on Windows that keeps running on battery with no time limit), or run `remote-code-bridge serve` yourself when you want it.
 - **Uninstalls without a trace.** Each machine keeps a record of exactly what was installed: files, folders it had to create, lines added to shell startup files, the service. `remote-code-bridge uninstall` removes exactly that, on both machines, and leaves everything that was there before.
 - **Knows your aliases.** Finds a reachable Linux remote in your `~/.ssh/config` (following `Include` files), asks which one when several different remotes are reachable, and treats aliases that reach the same machine (say `devbox` and `devbox.lan`) as one. `ProxyCommand`/`ProxyJump` jump hosts are fine.
 - **Leaves your SSH config alone.** Nothing is added to `~/.ssh/config`. Installations from version 1 are cleaned up automatically.
-- **Private by design.** The bridge listens only on your machine's `127.0.0.1`. On the remote, the tunnel is a socket in a directory only your account can open. Every request carries a random 64-character token that never appears on a command line. VS Code is started without a shell, and only safe flags are passed through. See [Security](docs/SECURITY.md).
+- **Private by design.** The bridge listens only on your machine's `127.0.0.1`. On the remote, the tunnel is a socket in a directory only your account can open. Every request carries a random 64-character token that never appears on a command line. VS Code is started without a shell, and only safe flags are passed through. See [Security](https://github.com/kshitizwagle/remote-code-bridge/blob/master/docs/SECURITY.md).
 - **Tiny and dependency-free.** Plain Python 3.8+, standard library only.
 
 ## Requirements
@@ -39,7 +39,7 @@ remote-code-bridge install devbox
 ## Install
 
 ```sh
-uv tool install git+https://github.com/kshitizwagle/remote-code-bridge
+uv tool install remote-code-bridge
 remote-code-bridge install devbox
 ```
 
@@ -58,11 +58,11 @@ If you chose not to install the service, keep `remote-code-bridge serve` running
 <summary>Without uv</summary>
 
 ```sh
-python3 -m pip install --user git+https://github.com/kshitizwagle/remote-code-bridge
+python3 -m pip install --user remote-code-bridge
 remote-code-bridge install devbox
 ```
 
-`pipx install git+https://github.com/kshitizwagle/remote-code-bridge` works too. To pin a version, add `@v2.0.0` to the URL.
+`pipx install remote-code-bridge` works too. To pin a version, install `remote-code-bridge==2.1.0`. To run unreleased code, install `git+https://github.com/kshitizwagle/remote-code-bridge` instead.
 </details>
 
 ### What installation sets up
@@ -84,7 +84,7 @@ remote-code-bridge update        # upgrade the package, update the remote, resta
 remote-code-bridge uninstall     # remove everything it installed, here and on the remote
 ```
 
-`update` upgrades with whatever installed it (uv or pip), then re-runs `install` for the saved alias. On Windows it finishes in a new window, because a running program can't replace its own files there.
+`update` asks PyPI for the latest release and, if it is newer than what you run, installs it with whatever installed it (uv or pip), then re-runs `install` for the saved alias. Prefer it to `uv tool upgrade remote-code-bridge`, which upgrades only your machine: the remote keeps the old version until you run `remote-code-bridge install` again. An installation from the GitHub URL moves to PyPI on its first `update`. On Windows it finishes in a new window, because a running program can't replace its own files there.
 
 `uninstall` lists what it will remove and asks before doing it (`--yes` skips the question). It removes the service, then the remote side over SSH, then your machine's side. If the remote can't be reached it stops and changes nothing; `--host-only` cleans just your machine (then run `~/.local/bin/remote-code-bridge uninstall` on the remote yourself). The program itself is uv's or pip's to remove, and the last step tells you how:
 
@@ -92,7 +92,7 @@ remote-code-bridge uninstall     # remove everything it installed, here and on t
 uv tool uninstall remote-code-bridge
 ```
 
-**Coming from version 1:** install with `uv tool install --force git+https://github.com/kshitizwagle/remote-code-bridge` (`--force` replaces the old `remote-code-bridge` command), then run `remote-code-bridge install`. It keeps your token and removes version 1's `RemoteForward` include from `~/.ssh/config`.
+**Coming from version 1:** install with `uv tool install --force remote-code-bridge` (`--force` replaces the old `remote-code-bridge` command), then run `remote-code-bridge install`. It keeps your token and removes version 1's `RemoteForward` include from `~/.ssh/config`.
 
 ## Troubleshooting
 
@@ -109,10 +109,10 @@ Logs: `~/.local/state/remote-code-bridge/bridge.log` (Linux), `~/Library/Logs/re
 ## How it works
 
 1. The bridge listens on `127.0.0.1:39731` on your machine and keeps one SSH connection to the remote: `ssh -N -R ~/.cache/remote-code-bridge/bridge.sock:127.0.0.1:39731 devbox`. That puts a Unix socket on the remote, in a directory only you can open, that leads back to the bridge.
-2. `code .` on the remote resolves the path and sends an authenticated `POST /open` through that socket.
-3. The bridge checks the token, alias, path, and flags, then starts `code --remote ssh-remote+devbox /path` without a shell.
+2. `code .` on the remote resolves the path, notes whether it is a folder, and sends an authenticated `POST /open` through that socket.
+3. The bridge checks the token, alias, path, and flags, then starts `code --folder-uri vscode-remote://ssh-remote+devbox/path` (or `--file-uri`) without a shell.
 
-See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md) for details.
+See [Architecture](https://github.com/kshitizwagle/remote-code-bridge/blob/master/docs/ARCHITECTURE.md) and [Security](https://github.com/kshitizwagle/remote-code-bridge/blob/master/docs/SECURITY.md) for details.
 
 ## Development
 
@@ -136,7 +136,7 @@ REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox python3 -m remote_code_bridge open .
 
 Configuration lives in `~/.config/remote-code-bridge/host.env` and `remote.env`; non-empty `REMOTE_CODE_BRIDGE_*` environment variables override them. Don't set a different `REMOTE_CODE_BRIDGE_TOKEN` in your shell for an installed setup; it would override the saved one.
 
-Releases: bump `__version__` in `remote_code_bridge/__init__.py`, then push a `v*` tag (or use **Actions → release → Run workflow**). The workflow tests that commit, checks the version matches the tag, and attaches the wheel and sdist to a GitHub release. Users on `uv tool install git+…` get it with `remote-code-bridge update`.
+Releases: bump `version` in `pyproject.toml` and `__version__` in `remote_code_bridge/__init__.py` (a test fails if they differ), then push a `v*` tag (or use **Actions → release → Run workflow**). The workflow tests that commit, checks both versions match the tag, builds with `uv build`, publishes to PyPI through trusted publishing, and attaches the wheel and sdist to a GitHub release. Users get it with `remote-code-bridge update`, which only ever installs published releases. To test unreleased changes end to end, run `RCB_PACKAGE_SPEC=/path/to/checkout remote-code-bridge update`.
 
 ## License
 
