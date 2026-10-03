@@ -1,13 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.18"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.12.22,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "remote-code-bridge"
-dynamic = ["version"]
+version = "2.1.0"  # keep equal to __version__ in remote_code_bridge/__init__.py (a test checks)
 description = "Run `code .` in any SSH session on a Linux remote and open it in VS Code on your own machine."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kshitiz Wagle" }]
 requires-python = ">=3.8"
 dependencies = []  # standard library only, on purpose
 keywords = ["vscode", "ssh", "remote-development", "tunnel"]
@@ -17,11 +19,13 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development",
 ]
 
 [project.urls]
 Homepage = "https://github.com/kshitizwagle/remote-code-bridge"
+Issues = "https://github.com/kshitizwagle/remote-code-bridge/issues"
 
 [project.scripts]
 remote-code-bridge = "remote_code_bridge.cli:main"
@@ -29,11 +33,9 @@ remote-code-bridge = "remote_code_bridge.cli:main"
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.6"]
 
-[tool.hatch.version]
-path = "remote_code_bridge/__init__.py"
-
-[tool.hatch.build.targets.sdist]
-include = ["remote_code_bridge", "tests", "README.md", "LICENSE", "docs"]
+[tool.uv.build-backend]
+module-root = ""  # the package sits at the top of the repository, not under src/
+source-include = ["tests/**", "docs/**"]
 
 [tool.ruff]
 line-length = 120

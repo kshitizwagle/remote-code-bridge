@@ -1,6 +1,6 @@
 # Architecture
 
-`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+). On your machine it is installed like any Python tool (`uv tool install git+https://github.com/kshitizwagle/remote-code-bridge`, or pip), which provides the `remote-code-bridge` command. The remote gets a single-file copy of the same package (a zipapp built by `bundle.py` at install time), so it only needs `python3`.
+`remote-code-bridge` is one Python package (`remote_code_bridge/`, standard library only, Python 3.8+). On your machine it is installed like any Python tool (`uv tool install remote-code-bridge` from PyPI, or pip), which provides the `remote-code-bridge` command. The remote gets a single-file copy of the same package (a zipapp built by `bundle.py` at install time), so it only needs `python3`.
 
 - `remote-code-bridge serve` is the bridge on your machine, run by the login service or by hand.
 - `remote-code-bridge open [code arguments]` is the remote client; invoked through a link named `code`, it selects `open` automatically.
@@ -107,7 +107,7 @@ Reinstalls and updates merge into the record, never shrink it, so something crea
 
 `uninstall.py` stops the service, runs `~/.local/bin/remote-code-bridge uninstall --yes` on the remote (which undoes the remote manifest, deleting the very file it runs from, which is why everything is imported up front), then removes the service and undoes the host manifest. If the remote can't be reached, the service is restarted and nothing is removed, unless `--host-only` is given. Without a manifest (an install from before manifests existed), it falls back to the locations it knows it creates.
 
-`update.py` stops the service, upgrades the package with whatever installed it (`uv tool install --force --reinstall` when running from a uv tool environment, otherwise pip; `RCB_PACKAGE_SPEC` overrides the source), then runs the new version's `install <alias> --yes`. On Windows a helper script does this after the command exits, because a running `python.exe` can't be replaced.
+`update.py` looks up the latest release on PyPI and stops if it is not newer than the running version. Otherwise it stops the service, installs `remote-code-bridge>=<latest>` with whatever installed it (`uv tool install --force --reinstall` when running from a uv tool environment, otherwise pip; `RCB_PACKAGE_SPEC` overrides the source), then runs the new version's `install <alias> --yes`. On Windows a helper script does this after the command exits, because a running `python.exe` can't be replaced.
 
 ## Modules
 

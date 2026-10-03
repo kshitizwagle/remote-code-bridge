@@ -112,10 +112,11 @@ wait_for 30 "tunnel after killing remote sshd" code_on_remote /srv/after-remote-
 printf 'tunnel recovery: ok\n'
 
 # -- update: a newer package version reaches the host and the remote, keeping the token ----------
-sed -i 's/^__version__ = .*/__version__ = "2.0.1"/' "$SRC/remote_code_bridge/__init__.py"
+sed -i 's/^__version__ = .*/__version__ = "99.0.0"/' "$SRC/remote_code_bridge/__init__.py"
+sed -i 's/^version = "[^"]*"/version = "99.0.0"/' "$SRC/pyproject.toml"
 RCB_PACKAGE_SPEC=$SRC remote-code-bridge update
-remote-code-bridge --version | grep -q 2.0.1 || fail "host not updated"
-remote '~/.local/bin/remote-code-bridge --version' | grep -q 2.0.1 || fail "remote not updated"
+remote-code-bridge --version | grep -q 99.0.0 || fail "host not updated"
+remote '~/.local/bin/remote-code-bridge --version' | grep -q 99.0.0 || fail "remote not updated"
 [ "$(sed -n 's/^REMOTE_CODE_BRIDGE_TOKEN=//p' "$HOST_ENV")" = "$TOKEN" ] || fail "update changed the token"
 wait_for 30 "tunnel after update" code_on_remote /srv/after-update
 wait_for 10 "host status up" tunnel_up

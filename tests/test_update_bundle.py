@@ -1,8 +1,13 @@
+import io
+import json
 import os
+import re
 import socket
 import subprocess
 import sys
 import time
+import urllib.error
+from pathlib import Path
 
 import pytest
 from conftest import TOKEN
@@ -72,6 +77,15 @@ def test_full_stack_through_the_archive(archive, tmp_path, home):
 
 # -- update ---------------------------------------------------------------------------------------
 
+real_latest_release = update.latest_release
+
+
+@pytest.fixture(autouse=True)
+def newer_release(monkeypatch):
+    """No test reaches PyPI; by default a newer release than the running version is out."""
+    monkeypatch.setattr(update, "latest_release", lambda: "9.0.0")
+    monkeypatch.delenv("RCB_PACKAGE_SPEC", raising=False)
+
 
 class StopRecorder:
     def __init__(self):
@@ -109,7 +123,7 @@ def test_update_with_uv_upgrades_then_reinstalls(saved_alias, ran, monkeypatch, 
     assert update.update(services=services) == 0
     assert services.stopped  # the service runs from the environment being replaced
     (upgrade, env), (reinstall, _) = ran
-    assert upgrade == ["/bin/uv", "tool", "install", "--force", "--reinstall", update.PACKAGE]
+    assert upgrade == ["/bin/uv", "tool", "install", "--force", "--reinstall", "remote-code-bridge>=9.0.0"]
     assert reinstall == ["/bin/remote-code-bridge", "install", "devbox", "--yes"]
     assert "GH_TOKEN" not in env
     assert "updated for SSH alias devbox" in capsys.readouterr().out
@@ -122,6 +136,55 @@ def test_update_with_pip_and_a_custom_source(saved_alias, ran, monkeypatch):
     assert ran[0][0] == [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", "--no-deps",
                          "/src/my-fork"]  # fmt: skip
     assert ran[1][0][1:] == ["install", "lab", "--yes"]
+
+
+def test_update_does_nothing_on_the_latest_release(saved_alias, ran, monkeypatch, capsys):
+    monkeypatch.setattr(update, "latest_release", lambda: update.__version__)
+    services = StopRecorder()
+    assert update.update(services=services) == 0
+    assert ran == [] and not services.stopped
+    assert "already on the latest release" in capsys.readouterr().out
+
+
+def test_update_compares_versions_as_numbers():
+    assert update.version_key("2.10.0") > update.version_key("2.9.1")
+    assert update.version_key("2.0") < update.version_key("2.0.1")
+
+
+class FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.mark.parametrize(
+    "answer,result",
+    [
+        (json.dumps({"info": {"version": "2.1.0"}}).encode(), "2.1.0"),
+        (json.dumps({"info": {"version": "2.1.0; rm -rf /"}}).encode(), "without a usable version"),
+        (json.dumps({"info": {"version": "3.0.0rc1"}}).encode(), "without a usable version"),
+        (json.dumps([]).encode(), "without a usable version"),
+        (b"<html>", "could not look up the latest release"),
+        (urllib.error.HTTPError("u", 404, "Not Found", {}, None), "no release has been published on PyPI"),
+        (urllib.error.HTTPError("u", 403, "Forbidden", {}, None), "PyPI answered HTTP 403"),
+        (urllib.error.URLError("no network"), "could not look up the latest release: <urlopen error no network>"),
+    ],
+)
+def test_latest_release(monkeypatch, answer, result):
+    def urlopen(request, timeout):
+        assert request.full_url == update.LATEST_RELEASE_URL
+        if isinstance(answer, Exception):
+            raise answer
+        return FakeResponse(answer)
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
+    if result[0].isdigit():
+        assert real_latest_release() == result
+    else:
+        with pytest.raises(BridgeError, match=result):
+            real_latest_release()
 
 
 def test_update_reports_a_failed_upgrade(saved_alias, monkeypatch):
@@ -156,4 +219,11 @@ def test_windows_update_continues_after_this_process_exits(saved_alias, monkeypa
     script = started[0][-1]
     text = open(script).read()
     assert "pip install --upgrade" in text and "remote-code-bridge install devbox --yes" in text
+    assert '"remote-code-bridge>=9.0.0"' in text  # quoted, or cmd.exe redirects to a file
     assert text.index("ping") < text.index("pip install")  # waits for this process to exit first
+
+
+def test_pyproject_version_matches_the_package():
+    """uv_build needs a static version, and the remote's zipapp can only read __version__."""
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    assert re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1) == update.__version__
