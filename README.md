@@ -6,6 +6,8 @@
 
 Run `code .` on a Linux machine you reached through SSH, and that directory opens in VS Code on your Windows, macOS, or Linux machine.
 
+> **Disclaimer:** this project, its code, tests, and documentation, was written by AI coding agents. Read the code and the [security notes](https://github.com/kshitizwagle/remote-code-bridge/blob/master/docs/SECURITY.md) before you rely on it.
+
 ```text
 remote: code .  →  SSH tunnel  →  bridge on your machine  →  code --remote ssh-remote+devbox /remote/path
 ```
