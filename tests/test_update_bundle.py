@@ -167,8 +167,9 @@ class FakeResponse(io.BytesIO):
         (json.dumps({"info": {"version": "3.0.0rc1"}}).encode(), "without a usable version"),
         (json.dumps([]).encode(), "without a usable version"),
         (b"<html>", "could not look up the latest release"),
-        (urllib.error.HTTPError("u", 404, "Not Found", {}, None), "no release has been published on PyPI"),
-        (urllib.error.HTTPError("u", 403, "Forbidden", {}, None), "PyPI answered HTTP 403"),
+        # Python 3.8's HTTPError raises KeyError from getattr() without a body, which breaks pytest's ids.
+        (urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO()), "no release has been published on PyPI"),
+        (urllib.error.HTTPError("u", 403, "Forbidden", {}, io.BytesIO()), "PyPI answered HTTP 403"),
         (urllib.error.URLError("no network"), "could not look up the latest release: <urlopen error no network>"),
     ],
 )
