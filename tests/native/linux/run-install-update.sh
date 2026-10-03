@@ -101,7 +101,7 @@ for i in 1 2 3 4 5 6; do code_on_remote "/srv/session-$i" >/dev/null || fail "co
 # A burst of 12 `code` commands at once (from one session: sshd itself refuses >10 simultaneous logins).
 remote 'for i in $(seq 1 12); do ~/.local/bin/code /srv/burst-$i >/dev/null & done; wait'
 wait_for 20 "18 VS Code launches" sh -c "[ \$(wc -l <'$CODE_LOG') -eq 18 ]"
-grep -qx -- '--remote ssh-remote+devbox /srv/burst-7' "$CODE_LOG" || fail "unexpected code arguments"
+grep -qx -- '--file-uri vscode-remote://ssh-remote+devbox/srv/burst-7' "$CODE_LOG" || fail "unexpected code arguments"
 printf 'sessions and burst: ok\n'
 
 # -- the tunnel heals itself, whichever end dies --------------------------------------------------

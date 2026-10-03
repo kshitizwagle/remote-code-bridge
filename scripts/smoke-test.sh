@@ -26,7 +26,7 @@ for _ in $(seq 1 50); do
 done
 
 output="$(REMOTE_CODE_BRIDGE_HOST_ALIAS=devbox "$TMP_DIR/code" --reuse-window .)"
-expected="dry-run command: code --reuse-window --remote ssh-remote+devbox $(pwd -P)"
+expected="dry-run command: code --reuse-window --folder-uri vscode-remote://ssh-remote+devbox$(pwd -P)"
 if [[ "$output" != "$expected" ]]; then
     echo "remote-code-bridge: unexpected dry-run command" >&2
     echo "  expected: $expected" >&2

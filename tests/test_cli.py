@@ -29,7 +29,10 @@ def test_invoked_as_code_opens(home, running, capsys):
     write_config(home, "remote.env", f"REMOTE_CODE_BRIDGE_PORT={running}\nREMOTE_CODE_BRIDGE_HOST_ALIAS=devbox\n"
                                      f"REMOTE_CODE_BRIDGE_TOKEN={TOKEN}\n")  # fmt: skip
     assert main(["/home/u/.local/bin/code", "--reuse-window", "/srv/app"]) == 0
-    assert capsys.readouterr().out.strip() == "dry-run command: code --reuse-window --remote ssh-remote+devbox /srv/app"
+    assert (
+        capsys.readouterr().out.strip()
+        == "dry-run command: code --reuse-window --file-uri vscode-remote://ssh-remote+devbox/srv/app"
+    )
 
 
 def test_errors_exit_2_with_prefix(home, capsys):

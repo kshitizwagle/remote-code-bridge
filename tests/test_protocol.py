@@ -66,7 +66,15 @@ def test_request_size_limits(body):
 
 
 @pytest.mark.parametrize(
-    "body", [b"not json", b"[]", {"path": 1}, {"path": "/a", "args": "x"}, {"path": "/a", "host": 3}]
+    "body",
+    [
+        b"not json",
+        b"[]",
+        {"path": 1},
+        {"path": "/a", "args": "x"},
+        {"path": "/a", "host": 3},
+        {"path": "/a", "folder": 1},
+    ],
 )
 def test_invalid_json(body):
     assert handle(post(body)) == Response.error(400, "invalid json")
@@ -112,6 +120,37 @@ def test_cmd_metacharacters_rejected_for_cmd_launchers(path):
     config = HostConfig(token="token", code_bin=r"C:\VS Code\bin\code.cmd", default_host="devbox", dry_run=True)
     assert handle(post({"path": path}), config) == Response.error(400, "path contains characters unsafe for code.cmd")
     assert handle(post({"path": path})).status == 200  # fine for a real executable
+
+
+def test_folders_and_files_are_named_explicitly():
+    """A WSL host's launcher looked for /home/u/Downloads on the host, did not find it, and opened it as a file."""
+    response = handle(post({"path": "/home/u/Downloads", "args": ["-r"], "folder": True}))
+    assert response.payload["command"] == [
+        "/usr/bin/code", "-r", "--folder-uri", "vscode-remote://ssh-remote+devbox/home/u/Downloads",
+    ]  # fmt: skip
+    response = handle(post({"path": "/home/u/Makefile", "args": ["-g"], "folder": False}))
+    assert response.payload["command"] == [
+        "/usr/bin/code",
+        "-g",
+        "--file-uri",
+        "vscode-remote://ssh-remote+devbox/home/u/Makefile",
+    ]
+
+
+def test_uri_escapes_characters_that_end_a_uri_path():
+    assert build_code_command(CONFIG, "devbox", "/a b/100%#?", [], folder=True)[-1] == (
+        "vscode-remote://ssh-remote+devbox/a b/100%25%23%3F"
+    )
+
+
+def test_cmd_launchers_keep_the_bare_path_when_the_uri_needs_percent_escapes():
+    config = HostConfig(token="token", code_bin=r"C:\VS Code\bin\code.cmd", default_host="devbox", dry_run=True)
+    assert build_code_command(config, "devbox", "/a#b", [], folder=True) == [
+        r"C:\VS Code\bin\code.cmd", "--remote", "ssh-remote+devbox", "/a#b",
+    ]  # fmt: skip
+    assert build_code_command(config, "devbox", "/a b", [], folder=True)[-2:] == [
+        "--folder-uri", "vscode-remote://ssh-remote+devbox/a b",
+    ]  # fmt: skip
 
 
 def test_command_builder_never_forwards_unsafe_flags():

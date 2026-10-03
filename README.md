@@ -109,8 +109,8 @@ Logs: `~/.local/state/remote-code-bridge/bridge.log` (Linux), `~/Library/Logs/re
 ## How it works
 
 1. The bridge listens on `127.0.0.1:39731` on your machine and keeps one SSH connection to the remote: `ssh -N -R ~/.cache/remote-code-bridge/bridge.sock:127.0.0.1:39731 devbox`. That puts a Unix socket on the remote, in a directory only you can open, that leads back to the bridge.
-2. `code .` on the remote resolves the path and sends an authenticated `POST /open` through that socket.
-3. The bridge checks the token, alias, path, and flags, then starts `code --remote ssh-remote+devbox /path` without a shell.
+2. `code .` on the remote resolves the path, notes whether it is a folder, and sends an authenticated `POST /open` through that socket.
+3. The bridge checks the token, alias, path, and flags, then starts `code --folder-uri vscode-remote://ssh-remote+devbox/path` (or `--file-uri`) without a shell.
 
 See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md) for details.
 

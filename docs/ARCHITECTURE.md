@@ -57,7 +57,7 @@ Content-Type: application/json
 {"host": "devbox", "path": "/home/user/project", "args": ["--reuse-window"]}
 ```
 
-`protocol.handle_request` checks, in order: route, body size, token (constant-time), JSON shape, absolute POSIX path without control characters, alias syntax, alias allow-list, and (for a `code.cmd` launcher) characters `cmd.exe` would interpret. It then builds `[code, safe flags…, --remote, ssh-remote+<host>, (--goto|-g)?, path]` and starts it as an argument list. At most 8 launches can be in flight, and at most 4 connections are handled at once; extra ones get `503`.
+`protocol.handle_request` checks, in order: route, body size, token (constant-time), JSON shape, absolute POSIX path without control characters, alias syntax, alias allow-list, and (for a `code.cmd` launcher) characters `cmd.exe` would interpret. The remote client reports whether the path is a folder, so the bridge builds `[code, safe flags…, (--goto|-g)?, --folder-uri|--file-uri, vscode-remote://ssh-remote+<host><path>]` and starts it as an argument list. VS Code would otherwise have to guess, and the Windows `code` launcher run from WSL guesses by looking for the path on the host, then opens a missing folder as a file. Requests from older clients without the flag, and URIs that need `%` escapes for a `code.cmd` launcher, still use `[code, safe flags…, --remote, ssh-remote+<host>, (--goto|-g)?, path]`. At most 8 launches can be in flight, and at most 4 connections are handled at once; extra ones get `503`.
 
 ## Configuration
 

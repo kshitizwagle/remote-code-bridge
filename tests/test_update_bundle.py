@@ -62,7 +62,7 @@ def test_full_stack_through_the_archive(archive, tmp_path, home):
                              capture_output=True, text=True)  # fmt: skip
         assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == (
-            f"dry-run command: code --reuse-window --remote ssh-remote+devbox {os.path.realpath(tmp_path)}"
+            f"dry-run command: code --reuse-window --folder-uri vscode-remote://ssh-remote+devbox{os.path.realpath(tmp_path)}"
         )
     finally:
         server.terminate()
