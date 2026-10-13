@@ -1,0 +1,22 @@
+{
+  "name": "remote-code-bridge",
+  "tagline": "Run `code .` on a remote Linux box and open it in VS Code on your own machine.",
+  "summary": "remote-code-bridge makes `code .` work in any SSH session to a Linux machine. One small bridge on your computer owns the tunnel, not any single terminal, so opening many sessions, closing them in any order, or losing the network doesn't break it: it reconnects on its own. It is pure Python with no dependencies, installs with `uv tool install`, and uninstalls without leaving anything behind. The bridge only listens on 127.0.0.1, and every request carries a random token.",
+  "status": "Stable · v2.1.0",
+  "year": "2026",
+  "role": "Author; built with AI coding agents (disclosed in the README)",
+  "platforms": ["Windows", "macOS", "Linux"],
+  "stack": ["Python 3.8+", "OpenSSH", "VS Code Remote-SSH", "systemd", "launchd", "Task Scheduler", "GitHub Actions"],
+  "icon": "icon.png",
+  "highlights": [
+    { "title": "Every SSH session works", "text": "Open ten terminals to the same remote and `code .` works in all of them, with no port-forwarding conflicts." },
+    { "title": "Heals itself", "text": "After sleep, network changes or a remote reboot it reconnects on its own; dead links are noticed within about 45 seconds." },
+    { "title": "Private by design", "text": "Listens only on 127.0.0.1, uses a 64-character token that never appears on a command line, and passes only safe flags to VS Code." },
+    { "title": "Leaves no trace", "text": "Records exactly what it installed, so `remote-code-bridge uninstall` removes it on both machines and leaves your SSH config alone." }
+  ],
+  "screenshots": [],
+  "links": [
+    { "label": "Source", "url": "https://github.com/kshitizwagle/remote-code-bridge", "primary": true },
+    { "label": "Security notes", "url": "https://github.com/kshitizwagle/remote-code-bridge/blob/master/docs/SECURITY.md" }
+  ]
+}
