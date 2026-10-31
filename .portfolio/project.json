@@ -1,5 +1,5 @@
 {
-  "name": "remote-code-bridge",
+  "name": "SSH Session Bridge",
   "tagline": "Run `code .` on a remote Linux box and open it in VS Code on your own machine.",
   "summary": "remote-code-bridge makes `code .` work in any SSH session to a Linux machine. One small bridge on your computer owns the tunnel, not any single terminal, so opening many sessions, closing them in any order, or losing the network doesn't break it: it reconnects on its own. It is pure Python with no dependencies, installs with `uv tool install`, and uninstalls without leaving anything behind. The bridge only listens on 127.0.0.1, and every request carries a random token.",
   "status": "Stable · v2.1.0",
