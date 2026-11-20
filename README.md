@@ -64,7 +64,7 @@ python3 -m pip install --user remote-code-bridge
 remote-code-bridge install devbox
 ```
 
-`pipx install remote-code-bridge` works too. To pin a version, install `remote-code-bridge==2.1.0`. To run unreleased code, install `git+https://github.com/kshitizwagle/remote-code-bridge` instead.
+`pipx install remote-code-bridge` works too. To pin a version, install `remote-code-bridge==2.1.1`. To run unreleased code, install `git+https://github.com/kshitizwagle/remote-code-bridge` instead.
 </details>
 
 ### What installation sets up

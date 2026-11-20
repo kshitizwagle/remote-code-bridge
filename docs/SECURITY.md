@@ -21,7 +21,7 @@ Treat the token like a password. Don't commit either config file or paste it int
 
 ## Installation source
 
-The package is installed from PyPI (`uv tool install remote-code-bridge`). Releases are uploaded only by this repository's release workflow, through PyPI trusted publishing, so no upload token exists to leak. To pin a reviewed version, install `remote-code-bridge==2.1.0`. It has no third-party dependencies. The remote never downloads anything: it receives its copy of the program from your machine over SSH standard input.
+The package is installed from PyPI (`uv tool install remote-code-bridge`). Releases are uploaded only by this repository's release workflow, through PyPI trusted publishing, so no upload token exists to leak. To pin a reviewed version, install `remote-code-bridge==2.1.1`. It has no third-party dependencies. The remote never downloads anything: it receives its copy of the program from your machine over SSH standard input.
 
 `remote-code-bridge update` asks PyPI (`https://pypi.org/pypi/remote-code-bridge/json`, without credentials) for the newest release, accepts it only if it is a plain version like `2.1.0`, and installs it with the same tool that installed it. `RCB_PACKAGE_SPEC` replaces the source and skips the lookup.
 

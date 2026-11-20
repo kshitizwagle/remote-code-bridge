@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "remote-code-bridge"
-version = "2.1.0"  # keep equal to __version__ in remote_code_bridge/__init__.py (a test checks)
+version = "2.1.1"  # keep equal to __version__ in remote_code_bridge/__init__.py (a test checks)
 description = "Run `code .` in any SSH session on a Linux remote and open it in VS Code on your own machine."
 readme = "README.md"
 license = "MIT"
