@@ -88,6 +88,65 @@ def windowless_python(python: str) -> str:
     return str(candidate) if candidate.exists() else python
 
 
+def windows_parent_map() -> dict[int, int]:
+    """{pid: parent pid} for every process, from a Toolhelp snapshot. Empty if that fails."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, wintypes.HANDLE(-1).value):
+        return {}
+    parents: dict[int, int] = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return parents
+
+
+def windows_ancestor_pids(parents: dict[int, int] | None = None, pid: int | None = None) -> set[int]:
+    """This process and every ancestor still running. Falls back to self and parent."""
+    pid = os.getpid() if pid is None else pid
+    try:
+        parents = windows_parent_map() if parents is None else parents
+    except (OSError, AttributeError, ValueError):
+        parents = {}
+    found = {pid}
+    if not parents:
+        return found | {os.getppid()}
+    while pid in parents and len(found) < 64:  # bound against cycles from recycled PIDs
+        pid = parents[pid]
+        if pid == 0 or pid in found:
+            break
+        found.add(pid)
+    return found
+
+
 class ServiceManager:
     def __init__(self, platform: str = sys.platform, run: Runner = run_command, home: Path | None = None):
         self.platform = platform
@@ -108,7 +167,15 @@ class ServiceManager:
             self.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"])
         elif self.platform == "win32":
             self.run(["schtasks", "/End", "/TN", TASK])
-            self.run(["taskkill", "/IM", "remote-code-bridge.exe", "/F"])  # v1 binary
+            # The v1 binary was called remote-code-bridge.exe, but so is uv's launcher for this very
+            # command. When install/update/uninstall run as `remote-code-bridge ...`, that launcher is
+            # one of our ancestors (launcher -> venv python.exe redirector -> python.exe), and killing
+            # it takes this process down with it. Spare every ancestor.
+            spared = windows_ancestor_pids()
+            self.run(
+                ["taskkill", "/IM", "remote-code-bridge.exe", "/F"]
+                + [arg for pid in sorted(spared) for arg in ("/FI", f"PID ne {pid}")]
+            )
 
     def unit_path(self) -> Path | None:
         if self.platform.startswith("linux"):

@@ -1,12 +1,20 @@
+import os
 import plistlib
 import subprocess
 import sys
 
 import pytest
 
-from remote_code_bridge import BridgeError
+from remote_code_bridge import BridgeError, service
 from remote_code_bridge.files import path_block_for, replace_block, resolve_symlinks, write_private
-from remote_code_bridge.service import ServiceManager, launchd_plist, systemd_unit, windows_task_xml
+from remote_code_bridge.service import (
+    ServiceManager,
+    launchd_plist,
+    systemd_unit,
+    windows_ancestor_pids,
+    windows_parent_map,
+    windows_task_xml,
+)
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes and symlinks")
 
@@ -96,6 +104,35 @@ def test_service_install_remove_and_stop(home, platform):
         assert ["schtasks", "/Delete", "/TN", "remote-code-bridge", "/F"] in run.calls
     if platform == "linux":
         assert ["systemctl", "--user", "disable", "--now", "remote-code-bridge.service"] in run.calls
+
+
+def test_windows_ancestor_pids_walks_the_whole_chain():
+    # uv launcher (30) -> venv python.exe redirector (20) -> python.exe (10); 99 is unrelated
+    parents = {10: 20, 20: 30, 30: 4, 4: 0, 99: 30}
+    assert windows_ancestor_pids(parents, pid=10) == {10, 20, 30, 4}
+    assert windows_ancestor_pids({10: 20, 20: 10}, pid=10) == {10, 20}  # recycled PIDs can form a cycle
+
+
+def test_windows_ancestor_pids_falls_back_to_self_and_parent():
+    assert windows_ancestor_pids({}, pid=os.getpid()) == {os.getpid(), os.getppid()}
+
+
+def test_windows_stop_never_kills_its_own_launcher(monkeypatch):
+    # Regression: `taskkill /IM remote-code-bridge.exe` also matched uv's launcher for this very
+    # command, so `remote-code-bridge install` killed itself before writing host.env.
+    monkeypatch.setattr(service, "windows_ancestor_pids", lambda: {10, 20, 30})
+    run = Recorder()
+    ServiceManager(platform="win32", run=run).stop()
+    kill = next(argv for argv in run.calls if argv[0] == "taskkill")
+    assert kill[:4] == ["taskkill", "/IM", "remote-code-bridge.exe", "/F"]
+    assert kill[4:] == ["/FI", "PID ne 10", "/FI", "PID ne 20", "/FI", "PID ne 30"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Toolhelp snapshot is Windows-only")
+def test_windows_parent_map_sees_this_process():
+    parents = windows_parent_map()
+    assert parents.get(os.getpid()) == os.getppid()
+    assert {os.getpid(), os.getppid()} <= windows_ancestor_pids()
 
 
 def test_service_failures_are_reported(home):
